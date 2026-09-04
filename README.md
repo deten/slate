@@ -8,7 +8,7 @@ It is early. It draws lines, polylines, arcs, circles, ellipses, splines, hatche
 
 Download the zip from the latest release, unzip it, and run `Slate.exe`.
 
-DWG files need the free ODA File Converter. Install it, then copy its folder to `converters\ODAFileConverter` next to `Slate.exe`. DXF files work without it.
+DWG files need the free ODA File Converter. Download it from https://www.opendesign.com/guestfiles/oda_file_converter, install it, then copy its folder to `converters\ODAFileConverter` next to `Slate.exe`. DXF files work without it.
 
 ## Building it
 

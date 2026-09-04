@@ -649,6 +649,28 @@ def canned(work: Path, name: str, text: str) -> Path:
     return path
 
 
+def test_hatch_picked_inside_a_room_traces_the_walls(work: Path) -> None:
+    """Pick an empty spot inside four walls and the fill finds them.
+
+    The walls overshoot their corners, as drawn walls do, so the boundary has
+    to be cut where they cross rather than chained end to end. One loop, solid,
+    associative to the walls it was traced from.
+    """
+    _, saved = run(work, "hatch-pick", [
+        "--run", "LINE", "--run", "-10,0", "--run", "210,0", "--run", "",
+        "--run", "LINE", "--run", "200,-10", "--run", "200,110", "--run", "",
+        "--run", "LINE", "--run", "210,100", "--run", "-10,100", "--run", "",
+        "--run", "LINE", "--run", "0,110", "--run", "0,-10", "--run", "",
+        "--run", "HATCH", "--run", "100,50", "--run", "", "--run", "S",
+    ])
+    hatches = records(saved, "HATCH")
+    expect(len(hatches) == 1, f"expected one hatch, found {len(hatches)}")
+    expect(hatches[0].get("91") == "1", f"expected one boundary loop:\n{hatches[0]}")
+    expect(hatches[0].get("70") == "1", "the fill was not written as solid")
+    expect(hatches[0].get("71") == "1", "the hatch is not associative to its walls")
+    expect(hatches[0].get("93") == "4", f"expected four edges, got {hatches[0].get('93')}")
+
+
 def test_the_assistant_draws_what_it_proposes(work: Path) -> None:
     """A sentence in, geometry out, with no network in the way.
 
@@ -1339,6 +1361,7 @@ SCENARIOS = [
     test_taking_hold_of_an_unmarked_grip_starts_over,
     test_two_marked_arc_ends_move_by_one_displacement,
     test_dragging_one_arc_end_keeps_the_centre,
+    test_hatch_picked_inside_a_room_traces_the_walls,
     test_the_assistant_draws_what_it_proposes,
     test_the_plan_is_shown_before_it_runs,
     test_an_invented_command_is_refused_and_the_rest_still_run,

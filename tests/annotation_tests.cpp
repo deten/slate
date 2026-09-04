@@ -16,6 +16,7 @@
 #include "cad/db/CurveEntities.hpp"
 #include "cad/db/DimensionEntity.hpp"
 #include "cad/db/HatchEntity.hpp"
+#include "cad/db/TextEntities.hpp"
 #include "cad/io/DxfReader.hpp"
 #include "cad/io/DxfWriter.hpp"
 #include "test_helpers.hpp"
@@ -1159,6 +1160,59 @@ TEST_SUITE("Annotation commands") {
         REQUIRE(hatch->paths[0].sourceHandles.size() == 1);
         CHECK(hatch->paths[0].sourceHandles[0] == boundary.handle);
         CHECK(hatch->contains(Vec3{5.0, 5.0, 0.0}));
+    }
+
+    TEST_CASE("HATCH picked inside a room traces its walls, islands included") {
+        CommandHarness harness;
+        // A room drawn as four separate walls that overshoot the corners, a
+        // column in the middle, and a note that must not become a boundary.
+        const Handle south = harness.db->addToModelSpace(std::make_unique<LineEntity>(
+            Vec3{-5.0, 0.0, 0.0}, Vec3{105.0, 0.0, 0.0})).handle;
+        harness.db->addToModelSpace(std::make_unique<LineEntity>(
+            Vec3{100.0, -5.0, 0.0}, Vec3{100.0, 65.0, 0.0}));
+        harness.db->addToModelSpace(std::make_unique<LineEntity>(
+            Vec3{105.0, 60.0, 0.0}, Vec3{-5.0, 60.0, 0.0}));
+        harness.db->addToModelSpace(std::make_unique<LineEntity>(
+            Vec3{0.0, 65.0, 0.0}, Vec3{0.0, -5.0, 0.0}));
+        harness.db->addToModelSpace(std::make_unique<CircleEntity>(Vec3{50.0, 30.0, 0.0}, 5.0));
+        harness.db->addToModelSpace(
+            std::make_unique<TextEntity>(Vec3{20.0, 40.0, 0.0}, std::string{"KITCHEN"}, 3.0));
+
+        REQUIRE(harness.executor.execute("HATCH").status == CommandOutcome::Status::Running);
+        CHECK(harness.executor.currentRequest()->kind == InputRequest::Kind::Point);
+        harness.executor.supply(point(10.0, 10.0));
+        harness.executor.supply(InputValue::makeEmpty());
+        harness.executor.supply(InputValue::makeText("SOLID"));
+
+        const auto* hatch = harness.only<HatchEntity>();
+        REQUIRE(hatch != nullptr);
+        REQUIRE(hatch->paths.size() == 2);
+        CHECK(hatch->paths[0].flags.isExternal);
+        CHECK(hatch->paths[0].flags.isDerived);
+        CHECK(hatch->paths[0].edges.size() == 4);
+        CHECK_FALSE(hatch->paths[1].flags.isExternal);
+        CHECK(hatch->paths[1].edges.size() == 1);
+        CHECK(hatch->paths[1].edges[0].kind == HatchEdge::Kind::Arc);
+        // The walls it was traced from are recorded, so the hatch follows them.
+        CHECK(hatch->isAssociative);
+        CHECK(std::find(hatch->paths[0].sourceHandles.begin(), hatch->paths[0].sourceHandles.end(),
+                        south) != hatch->paths[0].sourceHandles.end());
+        CHECK(hatch->paths[0].sourceHandles.size() == 4);
+        CHECK(hatch->contains(Vec3{10.0, 10.0, 0.0}));
+        CHECK_FALSE(hatch->contains(Vec3{50.0, 30.0, 0.0}));
+        CHECK_FALSE(hatch->contains(Vec3{-3.0, 30.0, 0.0}));
+    }
+
+    TEST_CASE("HATCH picked outside everything says so and asks again") {
+        CommandHarness harness;
+        harness.db->addToModelSpace(std::make_unique<LineEntity>(
+            Vec3{0.0, 0.0, 0.0}, Vec3{100.0, 0.0, 0.0}));
+        REQUIRE(harness.executor.execute("HATCH").status == CommandOutcome::Status::Running);
+        CHECK(harness.executor.supply(point(50.0, 10.0)).status == CommandOutcome::Status::Running);
+        CHECK(harness.executor.currentRequest()->kind == InputRequest::Kind::Point);
+        CHECK(harness.executor.supply(InputValue::makeEmpty()).status ==
+              CommandOutcome::Status::Cancelled);
+        CHECK(harness.only<HatchEntity>() == nullptr);
     }
 
     TEST_CASE("HATCH chains loose lines into a loop") {

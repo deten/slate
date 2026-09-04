@@ -31,6 +31,7 @@ add_executable(cad_tests
     tracking_tests.cpp
     agent_tests.cpp
     standards_tests.cpp
+    boundary_trace_tests.cpp
     nurbs_tests.cpp
     tessellation_tests.cpp
     roundtrip_tests.cpp

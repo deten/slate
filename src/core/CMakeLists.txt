@@ -22,6 +22,7 @@ add_library(cad_core STATIC
     src/geom/Polyline.cpp
     src/geom/Intersect.cpp
     src/geom/Operations.cpp
+    src/geom/BoundaryTrace.cpp
 
     src/db/Handle.cpp
     src/db/DbObject.cpp

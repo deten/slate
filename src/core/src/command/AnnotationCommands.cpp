@@ -13,9 +13,11 @@
 #include "cad/db/CurveEntities.hpp"
 #include "cad/db/DimensionEntity.hpp"
 #include "cad/db/HatchEntity.hpp"
+#include "cad/db/Layer.hpp"
 #include "cad/db/LeaderEntity.hpp"
 #include "cad/db/TextEntities.hpp"
 #include "cad/geom/Arc.hpp"
+#include "cad/geom/BoundaryTrace.hpp"
 #include "cad/geom/EllipseArc.hpp"
 #include "cad/geom/LineSegment.hpp"
 
@@ -654,13 +656,13 @@ constexpr double kChainTolerance = 1e-7;
     return paths;
 }
 
-/// HATCH — fill a region bounded by selected objects.
+/// HATCH — fill a region, picked from inside or bounded by selected objects.
 ///
-/// Boundaries come from a *selection*, not from a seed point. Seed-point
-/// tracing — picking an empty spot and having the region worked out — is what
-/// BHATCH does and is a substantially larger algorithm; it needs a planar
-/// arrangement of every nearby edge. Selecting the boundary is the honest
-/// subset, and it is exactly what the associativity data records anyway.
+/// Picking inside is the everyday way: the region around the point is traced
+/// from whatever is drawn there (see `traceBoundary`), islands included, and
+/// several picks make one hatch. Selecting the boundary objects instead is
+/// there for when the tracing is not wanted, and is what a pickfirst selection
+/// does.
 class HatchCommand final : public CommandInstance {
 public:
     StepResult start(CommandContext& context) override {
@@ -669,11 +671,7 @@ public:
             selection_ = context.initialSelection();
             return askPattern();
         }
-        InputRequest request;
-        request.kind = InputRequest::Kind::Selection;
-        request.prompt = "Select objects that bound the hatch";
-        request.minCount = 1;
-        return StepResult::ask(request);
+        return askSeed();
     }
 
     StepResult supply(const InputValue& input, CommandContext& context) override {
@@ -682,6 +680,42 @@ public:
         }
 
         switch (stage_) {
+            case Stage::Seed: {
+                // A selection offered straight away is the boundary, no
+                // keyword needed: that is how a script or a macro says it.
+                if (input.kind == InputValue::Kind::Selection ||
+                    input.kind == InputValue::Kind::Entity) {
+                    selection_ = input.kind == InputValue::Kind::Entity
+                                     ? std::vector<Handle>{input.entity}
+                                     : input.selection;
+                    if (selection_.empty()) {
+                        return StepResult::cancelled("Nothing selected.");
+                    }
+                    return askPattern();
+                }
+                if (input.kind == InputValue::Kind::Keyword && matchesKeyword(input.text, 'S')) {
+                    stage_ = Stage::Selection;
+                    InputRequest request;
+                    request.kind = InputRequest::Kind::Selection;
+                    request.prompt = "Select objects that bound the hatch";
+                    request.minCount = 1;
+                    return StepResult::ask(request);
+                }
+                if (input.kind == InputValue::Kind::Point) {
+                    std::string error;
+                    if (!traceAround(input.point, context, error)) {
+                        context.warn(error);
+                        return askSeed();
+                    }
+                    return askSeed();
+                }
+                // Enter, with nothing picked yet, is a change of mind.
+                if (traced_.empty()) {
+                    return StepResult::cancelled("No region was picked.");
+                }
+                return askPattern();
+            }
+
             case Stage::Selection: {
                 if (input.kind == InputValue::Kind::Selection) {
                     selection_ = input.selection;
@@ -739,7 +773,98 @@ public:
     }
 
 private:
-    enum class Stage : std::uint8_t { Selection, Pattern, Scale, Angle };
+    enum class Stage : std::uint8_t { Seed, Selection, Pattern, Scale, Angle };
+
+    [[nodiscard]] StepResult askSeed() {
+        stage_ = Stage::Seed;
+        InputRequest request;
+        request.kind = InputRequest::Kind::Point;
+        request.prompt = traced_.empty() ? "Specify internal point or [Select objects]"
+                                         : "Specify another internal point or press Enter";
+        request.allowEmpty = true;
+        request.keywords.push_back(CommandKeyword{"Select", "S", "Select the boundary objects"});
+        return StepResult::ask(request);
+    }
+
+    /// Trace the region around a picked point from what is drawn in the
+    /// current space, and keep it.
+    [[nodiscard]] bool traceAround(const Vec3& seed, CommandContext& context,
+                                   std::string& error) {
+        Database& db = context.db();
+        std::vector<CurvePtr> owned;
+        std::vector<Handle> owners;
+        for (const Entity* entity : db.entitiesIn(db.currentSpace())) {
+            if (entity == nullptr || entity->erased || !entity->visible) {
+                continue;
+            }
+            // What bounds a region is what is drawn: not the fills, notes and
+            // dimensions laid over it.
+            if (dynamic_cast<const HatchEntity*>(entity) != nullptr ||
+                dynamic_cast<const TextEntity*>(entity) != nullptr ||
+                dynamic_cast<const MTextEntity*>(entity) != nullptr ||
+                dynamic_cast<const DimensionEntity*>(entity) != nullptr ||
+                dynamic_cast<const LeaderEntity*>(entity) != nullptr) {
+                continue;
+            }
+            if (const auto* layer = db.get<Layer>(entity->layerHandle);
+                layer != nullptr && !layer->isVisible()) {
+                continue;
+            }
+            for (CurvePtr& curve : entity->toCurves()) {
+                if (curve != nullptr) {
+                    owned.push_back(std::move(curve));
+                    owners.push_back(entity->handle);
+                }
+            }
+        }
+        std::vector<const Curve*> curves;
+        curves.reserve(owned.size());
+        for (const CurvePtr& curve : owned) {
+            curves.push_back(curve.get());
+        }
+
+        const BoundaryTraceResult found = traceBoundary(curves, seed);
+        if (!found.ok()) {
+            error = found.error.empty() ? "No closed boundary was found around that point."
+                                        : found.error;
+            return false;
+        }
+
+        for (std::size_t i = 0; i < found.loops.size(); ++i) {
+            const BoundaryLoop& loop = found.loops[i];
+            HatchBoundaryPath path;
+            path.flags.isDerived = true;
+            if (i == 0) {
+                path.flags.isExternal = true;
+                path.flags.isOutermost = true;
+            }
+            for (const CurvePtr& curve : loop.curves) {
+                if (auto edge = edgeFromCurve(*curve, false)) {
+                    path.edges.push_back(std::move(*edge));
+                } else {
+                    const std::vector<Vec3> points = curve->tessellate();
+                    for (std::size_t j = 0; j + 1 < points.size(); ++j) {
+                        path.edges.push_back(HatchEdge::line(points[j], points[j + 1]));
+                    }
+                }
+            }
+            for (const std::size_t source : loop.sources) {
+                const Handle owner = owners[source];
+                if (std::find(path.sourceHandles.begin(), path.sourceHandles.end(), owner) ==
+                    path.sourceHandles.end()) {
+                    path.sourceHandles.push_back(owner);
+                }
+            }
+            if (!path.edges.empty()) {
+                traced_.push_back(std::move(path));
+            }
+        }
+        context.log(found.loops.size() == 1
+                        ? std::string{"Boundary found."}
+                        : "Boundary found, with " + std::to_string(found.loops.size() - 1) +
+                              " island(s).");
+        return true;
+    }
 
     [[nodiscard]] StepResult askPattern() {
         stage_ = Stage::Pattern;
@@ -753,16 +878,20 @@ private:
     }
 
     [[nodiscard]] StepResult create(CommandContext& context) {
-        std::size_t skipped = 0;
-        std::vector<HatchBoundaryPath> paths =
-            boundariesFrom(selection_, context.db(), skipped);
-        if (paths.empty()) {
-            return StepResult::failed(
-                "The selected objects do not form a closed boundary.");
-        }
-        if (skipped > 0) {
-            context.warn(std::to_string(skipped) +
-                         " selected object(s) have no boundary geometry and were ignored.");
+        std::vector<HatchBoundaryPath> paths;
+        if (!traced_.empty()) {
+            paths = std::move(traced_);
+        } else {
+            std::size_t skipped = 0;
+            paths = boundariesFrom(selection_, context.db(), skipped);
+            if (paths.empty()) {
+                return StepResult::failed(
+                    "The selected objects do not form a closed boundary.");
+            }
+            if (skipped > 0) {
+                context.warn(std::to_string(skipped) +
+                             " selected object(s) have no boundary geometry and were ignored.");
+            }
         }
 
         auto hatch = std::make_unique<HatchEntity>();
@@ -784,8 +913,10 @@ private:
         return StepResult::done();
     }
 
-    Stage stage_ = Stage::Selection;
+    Stage stage_ = Stage::Seed;
     std::vector<Handle> selection_;
+    /// Regions found by picking inside them, kept until the pattern is chosen.
+    std::vector<HatchBoundaryPath> traced_;
     std::string patternName_ = "ANSI31";
     double scale_ = 1.0;
     double angle_ = 0.0;
@@ -1372,7 +1503,7 @@ std::vector<CommandDefinition> annotationCommands() {
         // reached without thinking.
         hatch.aliases = {"H", "BH", "BHATCH"};
         hatch.title = "Hatch";
-        hatch.description = "Fill a region bounded by selected objects";
+        hatch.description = "Fill a region by picking inside it, or by selecting its boundary";
         hatch.category = "Draw";
         hatch.supportsPickfirst = true;
         hatch.create = [] { return std::make_unique<HatchCommand>(); };
