@@ -60,6 +60,12 @@ constexpr double kDefaultTextHeight = 2.5;
 /// TEXT and MTEXT differ only in how they are placed. Factoring out the rest
 /// keeps the height rule, the empty-string rule and cancellation identical
 /// between them, which is what stops the two feeling like different products.
+/// Whether a typed keyword is the one starting with `initial`.
+[[nodiscard]] bool matchesKeyword(const std::string& typed, char initial) {
+    return !typed.empty() &&
+           std::toupper(static_cast<unsigned char>(typed.front())) == initial;
+}
+
 class TextCommandBase : public CommandInstance {
 protected:
     /// Settle the height from the current style, or ask for one.
@@ -113,12 +119,7 @@ private:
 /// other CAD software's TEXT behaves and it is markedly faster than it sounds.
 class TextCommand final : public TextCommandBase {
 public:
-    StepResult start(CommandContext& /*context*/) override {
-        InputRequest request;
-        request.kind = InputRequest::Kind::Point;
-        request.prompt = "Specify start point of text";
-        return StepResult::ask(request);
-    }
+    StepResult start(CommandContext& /*context*/) override { return askPosition(); }
 
     StepResult supply(const InputValue& input, CommandContext& context) override {
         if (input.kind == InputValue::Kind::Cancel) {
@@ -126,6 +127,30 @@ public:
         }
 
         if (!hasPosition_) {
+            if (input.kind == InputValue::Kind::Keyword && !askingJustification_ &&
+                matchesKeyword(input.text, 'J')) {
+                askingJustification_ = true;
+                InputRequest request;
+                request.kind = InputRequest::Kind::Keyword;
+                request.prompt = "Enter an option [Left/Center/Right/Middle/TL/TC/TR/ML/MC/MR/BL/BC/BR]";
+                request.defaultText = "Left";
+                request.allowEmpty = true;
+                for (const Justification& option : kJustifications) {
+                    request.keywords.push_back(
+                        CommandKeyword{option.name, option.shortcut, option.description});
+                }
+                return StepResult::ask(request);
+            }
+            if (askingJustification_) {
+                askingJustification_ = false;
+                if (input.kind == InputValue::Kind::Keyword || input.kind == InputValue::Kind::Text) {
+                    if (const Justification* chosen = justificationFor(input.text)) {
+                        horizontal_ = chosen->horizontal;
+                        vertical_ = chosen->vertical;
+                    }
+                }
+                return askPosition();
+            }
             if (input.kind != InputValue::Kind::Point) {
                 return StepResult::cancelled();
             }
@@ -164,6 +189,14 @@ public:
         auto entity = std::make_unique<TextEntity>(position_, input.text, height());
         entity->rotation = rotation_;
         entity->styleHandle = styleHandle();
+        entity->horizontalAlignment = horizontal_;
+        entity->verticalAlignment = vertical_;
+        if (horizontal_ != TextHorizontalAlignment::Left ||
+            vertical_ != TextVerticalAlignment::Baseline) {
+            // Anything but the plain left baseline is anchored by the second
+            // point in the file; the picked point is that anchor.
+            entity->alignmentPoint = position_;
+        }
         context.transaction().addToCurrentSpace(std::move(entity));
         ++placed_;
 
@@ -177,6 +210,86 @@ public:
     }
 
 private:
+    /// One way of hanging text off its point, as TEXT names it.
+    struct Justification {
+        const char* name;
+        const char* shortcut;
+        const char* description;
+        TextHorizontalAlignment horizontal;
+        TextVerticalAlignment vertical;
+        const char* pointName;
+    };
+
+    static constexpr Justification kJustifications[] = {
+        {"Left", "L", "Baseline starts at the point", TextHorizontalAlignment::Left,
+         TextVerticalAlignment::Baseline, "start"},
+        {"Center", "C", "Baseline centred on the point", TextHorizontalAlignment::Center,
+         TextVerticalAlignment::Baseline, "center"},
+        {"Right", "R", "Baseline ends at the point", TextHorizontalAlignment::Right,
+         TextVerticalAlignment::Baseline, "right end"},
+        {"Middle", "M", "Middle of the text on the point", TextHorizontalAlignment::Middle,
+         TextVerticalAlignment::Baseline, "middle"},
+        {"TL", "TL", "Top left", TextHorizontalAlignment::Left, TextVerticalAlignment::Top,
+         "top left"},
+        {"TC", "TC", "Top centre", TextHorizontalAlignment::Center, TextVerticalAlignment::Top,
+         "top center"},
+        {"TR", "TR", "Top right", TextHorizontalAlignment::Right, TextVerticalAlignment::Top,
+         "top right"},
+        {"ML", "ML", "Middle left", TextHorizontalAlignment::Left, TextVerticalAlignment::Middle,
+         "middle left"},
+        {"MC", "MC", "Middle centre", TextHorizontalAlignment::Center,
+         TextVerticalAlignment::Middle, "middle center"},
+        {"MR", "MR", "Middle right", TextHorizontalAlignment::Right, TextVerticalAlignment::Middle,
+         "middle right"},
+        {"BL", "BL", "Bottom left", TextHorizontalAlignment::Left, TextVerticalAlignment::Bottom,
+         "bottom left"},
+        {"BC", "BC", "Bottom centre", TextHorizontalAlignment::Center,
+         TextVerticalAlignment::Bottom, "bottom center"},
+        {"BR", "BR", "Bottom right", TextHorizontalAlignment::Right, TextVerticalAlignment::Bottom,
+         "bottom right"},
+    };
+
+    /// The justification a typed answer names: its shortcut exactly, or the
+    /// start of its name. "M" is Middle, never one of the ML/MC/MR three.
+    [[nodiscard]] static const Justification* justificationFor(std::string_view text) {
+        std::string upper;
+        for (const char c : text) {
+            upper.push_back(static_cast<char>(std::toupper(static_cast<unsigned char>(c))));
+        }
+        if (upper.empty()) {
+            return nullptr;
+        }
+        for (const Justification& option : kJustifications) {
+            if (upper == option.shortcut) {
+                return &option;
+            }
+        }
+        for (const Justification& option : kJustifications) {
+            std::string name = option.name;
+            for (char& c : name) {
+                c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+            }
+            if (name.rfind(upper, 0) == 0) {
+                return &option;
+            }
+        }
+        return nullptr;
+    }
+
+    [[nodiscard]] StepResult askPosition() const {
+        InputRequest request;
+        request.kind = InputRequest::Kind::Point;
+        const char* pointName = "start";
+        for (const Justification& option : kJustifications) {
+            if (option.horizontal == horizontal_ && option.vertical == vertical_) {
+                pointName = option.pointName;
+            }
+        }
+        request.prompt = std::string{"Specify "} + pointName + " point of text or [Justify]";
+        request.keywords.push_back(CommandKeyword{"Justify", "J", "How the text hangs off its point"});
+        return StepResult::ask(request);
+    }
+
     [[nodiscard]] static StepResult askRotation() {
         InputRequest request;
         request.kind = InputRequest::Kind::Angle;
@@ -194,6 +307,9 @@ private:
 
     Vec3 position_;
     bool hasPosition_ = false;
+    bool askingJustification_ = false;
+    TextHorizontalAlignment horizontal_ = TextHorizontalAlignment::Left;
+    TextVerticalAlignment vertical_ = TextVerticalAlignment::Baseline;
     double rotation_ = 0.0;
     bool hasRotation_ = false;
     int placed_ = 0;

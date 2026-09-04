@@ -14,6 +14,7 @@
 #include "cad/command/CommandExecutor.hpp"
 #include "cad/command/StandardCommands.hpp"
 #include "cad/db/CurveEntities.hpp"
+#include "cad/db/DimStyle.hpp"
 #include "cad/db/DimensionEntity.hpp"
 #include "cad/db/HatchEntity.hpp"
 #include "cad/db/TextEntities.hpp"
@@ -1034,6 +1035,106 @@ TEST_SUITE("Annotation commands") {
         CHECK(dimension->measure() == doctest::Approx(100.0));
     }
 
+    TEST_CASE("DIMTEDIT moves the text to the ends, home, a point, or an angle") {
+        CommandHarness harness;
+        harness.executor.execute("DIMLINEAR");
+        harness.executor.supply(point(0.0, 0.0));
+        harness.executor.supply(point(100.0, 0.0));
+        harness.executor.supply(point(50.0, 20.0));
+        auto* dimension = harness.only<DimensionEntity>();
+        REQUIRE(dimension != nullptr);
+        const Handle handle = dimension->handle;
+        const DimStyle style = harness.db->effectiveDimStyle(*dimension);
+        const Vec3 home = dimension->defaultTextPosition(style);
+        CHECK(home.x == doctest::Approx(50.0));
+
+        // Left: nearer the first extension line than the middle, same height.
+        REQUIRE(harness.executor.execute("DIMTEDIT").status == CommandOutcome::Status::Running);
+        harness.executor.supply(InputValue::makeEntity(handle));
+        CHECK(harness.executor.supply(InputValue::makeKeyword("L")).status ==
+              CommandOutcome::Status::Completed);
+        dimension = harness.db->get<DimensionEntity>(handle);
+        CHECK(dimension->textPositionIsUserDefined);
+        CHECK(dimension->textMidPoint.x < 40.0);
+        CHECK(dimension->textMidPoint.x > 0.0);
+        CHECK(dimension->textMidPoint.y == doctest::Approx(home.y));
+
+        // Right: mirror of that.
+        harness.selection.setSelection({handle});
+        harness.executor.execute("DIMTEDIT");
+        harness.executor.supply(InputValue::makeKeyword("R"));
+        dimension = harness.db->get<DimensionEntity>(handle);
+        CHECK(dimension->textMidPoint.x > 60.0);
+        CHECK(dimension->textMidPoint.x < 100.0);
+
+        // A point puts it exactly there.
+        harness.selection.setSelection({handle});
+        harness.executor.execute("DIMTEDIT");
+        harness.executor.supply(point(70.0, 35.0));
+        dimension = harness.db->get<DimensionEntity>(handle);
+        CHECK(dimension->textMidPoint.equals(Vec3{70.0, 35.0, 0.0}, Tolerance{1e-9}));
+
+        // An angle turns it without moving it.
+        harness.selection.setSelection({handle});
+        harness.executor.execute("DIMTEDIT");
+        harness.executor.supply(InputValue::makeKeyword("A"));
+        harness.executor.supply(InputValue::makeNumber(0.5));
+        dimension = harness.db->get<DimensionEntity>(handle);
+        CHECK(dimension->hasTextRotationOverride);
+        CHECK(dimension->textRotationOverride == doctest::Approx(0.5));
+        CHECK(dimension->textMidPoint.x == doctest::Approx(70.0));
+
+        // Home puts it back where the style would, and straight.
+        harness.selection.setSelection({handle});
+        harness.executor.execute("DIMTEDIT");
+        harness.executor.supply(InputValue::makeKeyword("H"));
+        dimension = harness.db->get<DimensionEntity>(handle);
+        CHECK_FALSE(dimension->textPositionIsUserDefined);
+        CHECK_FALSE(dimension->hasTextRotationOverride);
+        CHECK(dimension->textMidPoint.equals(home, Tolerance{1e-9}));
+    }
+
+    TEST_CASE("DIMEDIT writes over, turns, slants and resets several dimensions at once") {
+        CommandHarness harness;
+        std::vector<Handle> handles;
+        for (double y : {0.0, 50.0}) {
+            harness.executor.execute("DIMLINEAR");
+            harness.executor.supply(point(0.0, y));
+            harness.executor.supply(point(100.0, y));
+            harness.executor.supply(point(50.0, y + 20.0));
+        }
+        for (Entity* entity : harness.entities()) {
+            handles.push_back(entity->handle);
+        }
+        REQUIRE(handles.size() == 2);
+
+        REQUIRE(harness.executor.execute("DIMEDIT").status == CommandOutcome::Status::Running);
+        CHECK(harness.executor.currentRequest()->kind == InputRequest::Kind::Keyword);
+        harness.executor.supply(InputValue::makeKeyword("N"));
+        harness.executor.supply(InputValue::makeText("VERIFY"));
+        CHECK(harness.executor.supply(InputValue::makeSelection(handles)).status ==
+              CommandOutcome::Status::Completed);
+        for (const Handle handle : handles) {
+            CHECK(harness.db->get<DimensionEntity>(handle)->textOverride == "VERIFY");
+        }
+
+        // Oblique with the selection made first.
+        harness.selection.setSelection(handles);
+        harness.executor.execute("DIMEDIT");
+        harness.executor.supply(InputValue::makeKeyword("O"));
+        CHECK(harness.executor.supply(InputValue::makeNumber(0.3)).status ==
+              CommandOutcome::Status::Completed);
+        CHECK(harness.db->get<DimensionEntity>(handles[0])->obliqueAngle == doctest::Approx(0.3));
+
+        // <> puts the measurement back.
+        harness.selection.setSelection(handles);
+        harness.executor.execute("DIMEDIT");
+        harness.executor.supply(InputValue::makeKeyword("N"));
+        CHECK(harness.executor.supply(InputValue::makeText("<>")).status ==
+              CommandOutcome::Status::Completed);
+        CHECK(harness.db->get<DimensionEntity>(handles[1])->textOverride.empty());
+    }
+
     TEST_CASE("DIMLINEAR dragged sideways measures the vertical separation") {
         CommandHarness harness;
         harness.executor.execute("DIMLINEAR");
@@ -1201,6 +1302,56 @@ TEST_SUITE("Annotation commands") {
         CHECK(hatch->contains(Vec3{10.0, 10.0, 0.0}));
         CHECK_FALSE(hatch->contains(Vec3{50.0, 30.0, 0.0}));
         CHECK_FALSE(hatch->contains(Vec3{-3.0, 30.0, 0.0}));
+    }
+
+    TEST_CASE("HATCHEDIT changes the pattern of a hatch that exists, undoably") {
+        CommandHarness harness;
+        auto hatch = std::make_unique<HatchEntity>();
+        hatch->paths.push_back(squarePath(0.0, 0.0, 10.0, 10.0, true));
+        hatch->pattern.name = "SOLID";
+        hatch->pattern.isSolid = true;
+        const Handle handle = harness.db->addToModelSpace(std::move(hatch)).handle;
+
+        REQUIRE(harness.executor.execute("HATCHEDIT").status == CommandOutcome::Status::Running);
+        harness.executor.supply(InputValue::makeEntity(handle));
+        harness.executor.supply(InputValue::makeText("ANSI31"));
+        harness.executor.supply(InputValue::makeNumber(2.5));
+        CHECK(harness.executor.supply(InputValue::makeNumber(0.5)).status ==
+              CommandOutcome::Status::Completed);
+
+        const auto* edited = harness.db->get<HatchEntity>(handle);
+        REQUIRE(edited != nullptr);
+        CHECK_FALSE(edited->pattern.isSolid);
+        CHECK(edited->pattern.name == "ANSI31");
+        CHECK(edited->pattern.scale == doctest::Approx(2.5));
+        CHECK(edited->pattern.angle == doctest::Approx(0.5));
+        CHECK(edited->paths.size() == 1);
+
+        harness.transactions.undo();
+        CHECK(harness.db->get<HatchEntity>(handle)->pattern.isSolid);
+    }
+
+    TEST_CASE("HATCHEDIT offers the hatch's own settings and Enter keeps them") {
+        CommandHarness harness;
+        auto hatch = std::make_unique<HatchEntity>();
+        hatch->paths.push_back(squarePath(0.0, 0.0, 10.0, 10.0, true));
+        hatch->pattern = *standardHatchPattern("ANSI31");
+        hatch->pattern.scale = 3.0;
+        hatch->pattern.angle = 1.0;
+        const Handle handle = harness.db->addToModelSpace(std::move(hatch)).handle;
+        harness.selection.setSelection({handle});
+
+        REQUIRE(harness.executor.execute("HATCHEDIT").status == CommandOutcome::Status::Running);
+        CHECK(harness.executor.currentRequest()->defaultText == "ANSI31");
+        harness.executor.supply(InputValue::makeEmpty());
+        CHECK(harness.executor.currentRequest()->defaultNumber == doctest::Approx(3.0));
+        harness.executor.supply(InputValue::makeEmpty());
+        CHECK(harness.executor.currentRequest()->defaultNumber == doctest::Approx(1.0));
+        CHECK(harness.executor.supply(InputValue::makeEmpty()).status ==
+              CommandOutcome::Status::Completed);
+        const auto* edited = harness.db->get<HatchEntity>(handle);
+        CHECK(edited->pattern.scale == doctest::Approx(3.0));
+        CHECK(edited->pattern.angle == doctest::Approx(1.0));
     }
 
     TEST_CASE("HATCH picked outside everything says so and asks again") {

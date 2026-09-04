@@ -8,9 +8,12 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
+#include <optional>
 
 #include "cad/command/StandardCommands.hpp"
 #include "cad/db/CurveEntities.hpp"
+#include "cad/db/DimStyle.hpp"
 #include "cad/db/DimensionEntity.hpp"
 #include "cad/db/HatchEntity.hpp"
 #include "cad/db/Layer.hpp"
@@ -1376,6 +1379,449 @@ private:
     int steps_ = 0;
 };
 
+namespace {
+
+/// HATCHEDIT — change the pattern, scale or angle of a hatch that exists.
+///
+/// The same three questions HATCH asks, with the hatch's own answers offered
+/// as the defaults, so pressing Enter through the ones that are fine changes
+/// only the one that is not.
+class HatchEditCommand final : public CommandInstance {
+public:
+    StepResult start(CommandContext& context) override {
+        if (context.initialSelection().size() == 1) {
+            if (auto* hatch = context.db().get<HatchEntity>(context.initialSelection().front());
+                hatch != nullptr && !hatch->erased) {
+                return begin(*hatch);
+            }
+        }
+        return askEntity();
+    }
+
+    StepResult supply(const InputValue& input, CommandContext& context) override {
+        if (input.kind == InputValue::Kind::Cancel) {
+            return StepResult::cancelled();
+        }
+        switch (stage_) {
+            case Stage::Entity: {
+                if (input.kind != InputValue::Kind::Entity) {
+                    return StepResult::cancelled();
+                }
+                auto* hatch = context.db().get<HatchEntity>(input.entity);
+                if (hatch == nullptr || hatch->erased) {
+                    context.warn("That is not a hatch.");
+                    return askEntity();
+                }
+                return begin(*hatch);
+            }
+            case Stage::Pattern: {
+                if (input.kind == InputValue::Kind::Keyword && matchesKeyword(input.text, 'S')) {
+                    patternName_ = kHatchPatternSolid;
+                } else if (input.kind == InputValue::Kind::Text && !input.text.empty()) {
+                    patternName_ = input.text;
+                }
+                if (normalizeSymbolName(patternName_) == normalizeSymbolName(kHatchPatternSolid)) {
+                    return apply(context);
+                }
+                stage_ = Stage::Scale;
+                InputRequest request;
+                request.kind = InputRequest::Kind::Number;
+                request.prompt = "Specify pattern scale";
+                request.defaultNumber = scale_;
+                request.allowEmpty = true;
+                request.minimum = 1e-6;
+                return StepResult::ask(request);
+            }
+            case Stage::Scale: {
+                if (input.kind == InputValue::Kind::Number && input.number > 0.0) {
+                    scale_ = input.number;
+                }
+                stage_ = Stage::Angle;
+                InputRequest request;
+                request.kind = InputRequest::Kind::Angle;
+                request.prompt = "Specify pattern angle";
+                request.defaultNumber = angle_;
+                request.allowEmpty = true;
+                return StepResult::ask(request);
+            }
+            case Stage::Angle:
+            default: {
+                if (input.kind == InputValue::Kind::Number) {
+                    angle_ = input.number;
+                }
+                return apply(context);
+            }
+        }
+    }
+
+private:
+    enum class Stage : std::uint8_t { Entity, Pattern, Scale, Angle };
+
+    [[nodiscard]] StepResult askEntity() {
+        stage_ = Stage::Entity;
+        InputRequest request;
+        request.kind = InputRequest::Kind::Entity;
+        request.prompt = "Select a hatch to edit";
+        return StepResult::ask(request);
+    }
+
+    [[nodiscard]] StepResult begin(const HatchEntity& hatch) {
+        handle_ = hatch.handle;
+        patternName_ = hatch.pattern.name;
+        scale_ = hatch.pattern.scale;
+        angle_ = hatch.pattern.angle;
+        stage_ = Stage::Pattern;
+        InputRequest request;
+        request.kind = InputRequest::Kind::Text;
+        request.prompt = "Enter pattern name";
+        request.defaultText = patternName_;
+        request.allowEmpty = true;
+        request.keywords.push_back(kSolidKeyword);
+        return StepResult::ask(request);
+    }
+
+    [[nodiscard]] StepResult apply(CommandContext& context) {
+        auto* hatch = context.db().get<HatchEntity>(handle_);
+        if (hatch == nullptr || hatch->erased) {
+            return StepResult::failed("The hatch is no longer there.");
+        }
+        HatchPattern pattern;
+        if (normalizeSymbolName(patternName_) == normalizeSymbolName(kHatchPatternSolid)) {
+            pattern.name = kHatchPatternSolid;
+            pattern.isSolid = true;
+        } else if (const auto known = standardHatchPattern(patternName_)) {
+            pattern = *known;
+            pattern.scale = scale_;
+            pattern.angle = angle_;
+        } else if (normalizeSymbolName(patternName_) == normalizeSymbolName(hatch->pattern.name) &&
+                   !hatch->pattern.isSolid) {
+            // A pattern that came in with the file and is not one of ours:
+            // its lines are kept and only the scale and angle move.
+            pattern = hatch->pattern;
+            pattern.scale = scale_;
+            pattern.angle = angle_;
+        } else {
+            return StepResult::failed("Unknown hatch pattern '" + patternName_ + "'.");
+        }
+        context.transaction().modifyEntity(*hatch, [&](HatchEntity& edited) {
+            edited.pattern = pattern;
+            edited.gradient.enabled = false;
+        });
+        return StepResult::done("Hatch updated");
+    }
+
+    Stage stage_ = Stage::Entity;
+    Handle handle_;
+    std::string patternName_ = kHatchPatternSolid;
+    double scale_ = 1.0;
+    double angle_ = 0.0;
+};
+
+/// The ends of a linear dimension's line, and the direction along it.
+struct DimensionLine {
+    Vec3 first;
+    Vec3 second;
+    Vec3 along;
+};
+
+[[nodiscard]] std::optional<DimensionLine> linearDimensionLine(const DimensionEntity& dimension) {
+    if (dimension.type != DimensionType::Rotated && dimension.type != DimensionType::Aligned) {
+        return std::nullopt;
+    }
+    Vec3 along;
+    if (dimension.type == DimensionType::Aligned) {
+        const Vec3 delta = dimension.point14 - dimension.point13;
+        along = delta.lengthSquared() < 1e-12 ? Vec3::unitX() : delta.normalized();
+    } else {
+        along = Vec3{std::cos(dimension.rotation), std::sin(dimension.rotation), 0.0};
+    }
+    const Vec3 origin = dimension.definitionPoint;
+    DimensionLine line;
+    line.along = along;
+    line.first = origin + along * (dimension.point13 - origin).dot(along);
+    line.second = origin + along * (dimension.point14 - origin).dot(along);
+    if ((line.second - line.first).dot(along) < 0.0) {
+        std::swap(line.first, line.second);
+    }
+    return line;
+}
+
+/// Put a linear dimension's text at the left or right end of its line, the
+/// distance in from the extension line that the arrow, the gap and half the
+/// text take up, keeping whatever offset above or below the line it had.
+[[nodiscard]] bool placeTextAtEnd(DimensionEntity& dimension, const DimStyle& style, bool left) {
+    const std::optional<DimensionLine> line = linearDimensionLine(dimension);
+    if (!line) {
+        return false;
+    }
+    const Vec3 middle = line->first.midpoint(line->second);
+    const Vec3 offset = dimension.defaultTextPosition(style) - middle;
+    const double height = style.scaled(style.textHeight);
+    const double width = measureText(dimension.generate(style).text, height, 1.0);
+    const double inset = style.scaled(style.arrowSize) + style.scaled(style.textGap) + width / 2.0;
+    const Vec3 at = left ? line->first + line->along * inset : line->second - line->along * inset;
+    dimension.textMidPoint = at + offset;
+    dimension.textPositionIsUserDefined = true;
+    return true;
+}
+
+/// DIMTEDIT — move or turn the text of one dimension.
+///
+/// Dragging the text grip does the common case; this is for the placements
+/// a drafter names rather than drags: hard left, hard right, back home, or
+/// turned to an angle.
+class DimensionTextEditCommand final : public CommandInstance {
+public:
+    StepResult start(CommandContext& context) override {
+        if (context.initialSelection().size() == 1) {
+            if (auto* dimension = context.db().get<DimensionEntity>(context.initialSelection().front());
+                dimension != nullptr && !dimension->erased) {
+                handle_ = dimension->handle;
+                return askPlacement();
+            }
+        }
+        InputRequest request;
+        request.kind = InputRequest::Kind::Entity;
+        request.prompt = "Select a dimension";
+        return StepResult::ask(request);
+    }
+
+    StepResult supply(const InputValue& input, CommandContext& context) override {
+        if (input.kind == InputValue::Kind::Cancel) {
+            return StepResult::cancelled();
+        }
+        if (handle_.isNull()) {
+            if (input.kind != InputValue::Kind::Entity) {
+                return StepResult::cancelled();
+            }
+            auto* dimension = context.db().get<DimensionEntity>(input.entity);
+            if (dimension == nullptr || dimension->erased) {
+                context.warn("That is not a dimension.");
+                return start(context);
+            }
+            handle_ = dimension->handle;
+            return askPlacement();
+        }
+        auto* dimension = context.db().get<DimensionEntity>(handle_);
+        if (dimension == nullptr || dimension->erased) {
+            return StepResult::failed("The dimension is no longer there.");
+        }
+        const DimStyle style = context.db().effectiveDimStyle(*dimension);
+
+        if (askingAngle_) {
+            if (input.kind != InputValue::Kind::Number) {
+                return StepResult::cancelled();
+            }
+            context.transaction().modifyEntity(*dimension, [&](DimensionEntity& edited) {
+                edited.textRotationOverride = input.number;
+                edited.hasTextRotationOverride = true;
+            });
+            return StepResult::done("Dimension text turned");
+        }
+
+        if (input.kind == InputValue::Kind::Point) {
+            context.transaction().modifyEntity(*dimension, [&](DimensionEntity& edited) {
+                edited.textMidPoint = input.point;
+                edited.textPositionIsUserDefined = true;
+            });
+            return StepResult::done("Dimension text moved");
+        }
+        if (input.kind != InputValue::Kind::Keyword) {
+            return StepResult::cancelled();
+        }
+        if (matchesKeyword(input.text, 'A')) {
+            askingAngle_ = true;
+            InputRequest request;
+            request.kind = InputRequest::Kind::Angle;
+            request.prompt = "Specify angle for dimension text";
+            request.defaultNumber = dimension->hasTextRotationOverride
+                                        ? dimension->textRotationOverride
+                                        : 0.0;
+            return StepResult::ask(request);
+        }
+        if (matchesKeyword(input.text, 'H') || matchesKeyword(input.text, 'C')) {
+            context.transaction().modifyEntity(*dimension, [&](DimensionEntity& edited) {
+                edited.textPositionIsUserDefined = false;
+                edited.textMidPoint = edited.defaultTextPosition(style);
+                if (matchesKeyword(input.text, 'H')) {
+                    edited.hasTextRotationOverride = false;
+                    edited.textRotationOverride = 0.0;
+                }
+            });
+            return StepResult::done("Dimension text put back");
+        }
+        const bool left = matchesKeyword(input.text, 'L');
+        if (left || matchesKeyword(input.text, 'R')) {
+            bool placed = false;
+            context.transaction().modifyEntity(*dimension, [&](DimensionEntity& edited) {
+                placed = placeTextAtEnd(edited, style, left);
+            });
+            if (!placed) {
+                return StepResult::failed("Left and Right apply to linear dimensions.");
+            }
+            return StepResult::done(left ? "Dimension text moved left" : "Dimension text moved right");
+        }
+        return askPlacement();
+    }
+
+private:
+    [[nodiscard]] static StepResult askPlacement() {
+        InputRequest request;
+        request.kind = InputRequest::Kind::Point;
+        request.prompt = "Specify new location for dimension text or [Left/Right/Center/Home/Angle]";
+        request.keywords = {CommandKeyword{"Left", "L", "Text at the left end of the line"},
+                            CommandKeyword{"Right", "R", "Text at the right end of the line"},
+                            CommandKeyword{"Center", "C", "Text back on the middle of the line"},
+                            CommandKeyword{"Home", "H", "Text where the style puts it, unturned"},
+                            CommandKeyword{"Angle", "A", "Turn the text"}};
+        return StepResult::ask(request);
+    }
+
+    Handle handle_;
+    bool askingAngle_ = false;
+};
+
+/// DIMEDIT — change several dimensions at once: put their text home, write
+/// text over the measurement, turn the text, or slant the extension lines.
+class DimensionEditCommand final : public CommandInstance {
+public:
+    StepResult start(CommandContext& context) override {
+        preselected_ = context.initialSelection();
+        InputRequest request;
+        request.kind = InputRequest::Kind::Keyword;
+        request.prompt = "Enter type of dimension editing [Home/New/Rotate/Oblique]";
+        request.defaultText = "Home";
+        request.allowEmpty = true;
+        request.keywords = {CommandKeyword{"Home", "H", "Put the text back where the style puts it"},
+                            CommandKeyword{"New", "N", "Write text in place of the measurement"},
+                            CommandKeyword{"Rotate", "R", "Turn the text"},
+                            CommandKeyword{"Oblique", "O", "Slant the extension lines"}};
+        return StepResult::ask(request);
+    }
+
+    StepResult supply(const InputValue& input, CommandContext& context) override {
+        if (input.kind == InputValue::Kind::Cancel) {
+            return StepResult::cancelled();
+        }
+        switch (stage_) {
+            case Stage::Mode: {
+                if (input.kind == InputValue::Kind::Keyword || input.kind == InputValue::Kind::Text) {
+                    if (matchesKeyword(input.text, 'N')) {
+                        mode_ = Mode::New;
+                    } else if (matchesKeyword(input.text, 'R')) {
+                        mode_ = Mode::Rotate;
+                    } else if (matchesKeyword(input.text, 'O')) {
+                        mode_ = Mode::Oblique;
+                    }
+                }
+                if (mode_ == Mode::New) {
+                    stage_ = Stage::Value;
+                    InputRequest request;
+                    request.kind = InputRequest::Kind::Text;
+                    request.prompt = "Enter new dimension text, or <> for the measurement";
+                    request.defaultText = "<>";
+                    request.allowEmpty = true;
+                    return StepResult::ask(request);
+                }
+                if (mode_ == Mode::Rotate || mode_ == Mode::Oblique) {
+                    stage_ = Stage::Value;
+                    InputRequest request;
+                    request.kind = InputRequest::Kind::Angle;
+                    request.prompt = mode_ == Mode::Rotate ? "Specify angle for dimension text"
+                                                           : "Enter obliquing angle";
+                    request.defaultNumber = 0.0;
+                    return StepResult::ask(request);
+                }
+                return askSelection(context);
+            }
+            case Stage::Value: {
+                if (mode_ == Mode::New) {
+                    text_ = input.kind == InputValue::Kind::Text ? input.text : std::string{};
+                    if (text_ == "<>") {
+                        text_.clear();
+                    }
+                } else if (input.kind == InputValue::Kind::Number) {
+                    angle_ = input.number;
+                } else {
+                    return StepResult::cancelled();
+                }
+                return askSelection(context);
+            }
+            case Stage::Selection:
+            default: {
+                std::vector<Handle> handles = preselected_;
+                if (input.kind == InputValue::Kind::Selection) {
+                    handles = input.selection;
+                } else if (input.kind == InputValue::Kind::Entity) {
+                    handles = {input.entity};
+                }
+                return apply(handles, context);
+            }
+        }
+    }
+
+private:
+    enum class Stage : std::uint8_t { Mode, Value, Selection };
+    enum class Mode : std::uint8_t { Home, New, Rotate, Oblique };
+
+    [[nodiscard]] StepResult askSelection(CommandContext& context) {
+        stage_ = Stage::Selection;
+        if (!preselected_.empty()) {
+            // The selection was made before the command; nothing to ask.
+            return apply(preselected_, context);
+        }
+        InputRequest request;
+        request.kind = InputRequest::Kind::Selection;
+        request.prompt = "Select dimensions";
+        request.minCount = 1;
+        return StepResult::ask(request);
+    }
+
+    [[nodiscard]] StepResult apply(const std::vector<Handle>& handles, CommandContext& context) {
+        std::size_t changed = 0;
+        for (const Handle handle : handles) {
+            auto* dimension = context.db().get<DimensionEntity>(handle);
+            if (dimension == nullptr || dimension->erased) {
+                continue;
+            }
+            const DimStyle style = context.db().effectiveDimStyle(*dimension);
+            context.transaction().modifyEntity(*dimension, [&](DimensionEntity& edited) {
+                switch (mode_) {
+                    case Mode::Home:
+                        edited.textPositionIsUserDefined = false;
+                        edited.textMidPoint = edited.defaultTextPosition(style);
+                        edited.hasTextRotationOverride = false;
+                        edited.textRotationOverride = 0.0;
+                        break;
+                    case Mode::New:
+                        edited.textOverride = text_;
+                        break;
+                    case Mode::Rotate:
+                        edited.textRotationOverride = angle_;
+                        edited.hasTextRotationOverride = true;
+                        break;
+                    case Mode::Oblique:
+                        edited.obliqueAngle = angle_;
+                        break;
+                }
+            });
+            ++changed;
+        }
+        if (changed == 0) {
+            return StepResult::failed("No dimensions were selected.");
+        }
+        return StepResult::done(std::to_string(changed) + " dimension(s) changed");
+    }
+
+    Stage stage_ = Stage::Mode;
+    Mode mode_ = Mode::Home;
+    std::string text_;
+    double angle_ = 0.0;
+    std::vector<Handle> preselected_;
+};
+
+}  // namespace
+
 std::vector<CommandDefinition> annotationCommands() {
     std::vector<CommandDefinition> commands;
 
@@ -1508,6 +1954,42 @@ std::vector<CommandDefinition> annotationCommands() {
         hatch.supportsPickfirst = true;
         hatch.create = [] { return std::make_unique<HatchCommand>(); };
         commands.push_back(std::move(hatch));
+    }
+    {
+        CommandDefinition edit;
+        edit.id = "cad.draw.hatchedit";
+        edit.name = "HATCHEDIT";
+        edit.aliases = {"HE"};
+        edit.title = "Edit Hatch";
+        edit.description = "Change the pattern, scale or angle of a hatch";
+        edit.category = "Draw";
+        edit.supportsPickfirst = true;
+        edit.create = [] { return std::make_unique<HatchEditCommand>(); };
+        commands.push_back(std::move(edit));
+    }
+    {
+        CommandDefinition text;
+        text.id = "cad.annotate.dimtedit";
+        text.name = "DIMTEDIT";
+        text.aliases = {"DIMTED"};
+        text.title = "Dimension Text";
+        text.description = "Move or turn the text of a dimension";
+        text.category = "Dimension";
+        text.supportsPickfirst = true;
+        text.create = [] { return std::make_unique<DimensionTextEditCommand>(); };
+        commands.push_back(std::move(text));
+    }
+    {
+        CommandDefinition edit;
+        edit.id = "cad.annotate.dimedit";
+        edit.name = "DIMEDIT";
+        edit.aliases = {"DED", "DIMED"};
+        edit.title = "Edit Dimension";
+        edit.description = "Put dimension text home, write over it, turn it, or slant the extension lines";
+        edit.category = "Dimension";
+        edit.supportsPickfirst = true;
+        edit.create = [] { return std::make_unique<DimensionEditCommand>(); };
+        commands.push_back(std::move(edit));
     }
 
     return commands;

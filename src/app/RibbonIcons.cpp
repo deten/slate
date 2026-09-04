@@ -683,6 +683,38 @@ void letterA(const Ink& ink, qreal x, qreal y, qreal h) {
              i.line(22, 8, 22, 16);
              i.newLine(12, 12, 22, 12);
          }},
+        {"HATCHEDIT",
+         [](const Ink& i) {
+             // A hatched box with its strokes being redrawn: two of them in
+             // the accent, the third a pencil.
+             i.rect(4, 5, 16, 14);
+             i.painter->setPen(i.accent);
+             i.painter->setClipRect(QRectF{4.5, 5.5, 15, 13});
+             i.painter->drawLine(QPointF{-4, 20}, QPointF{10, 4});
+             i.painter->drawLine(QPointF{3.5, 20}, QPointF{17.5, 4});
+             i.painter->setClipping(false);
+             i.newLine(14, 19, 22, 11);
+             i.line(20, 9, 22, 11);
+         }},
+        {"DIMTEDIT",
+         [](const Ink& i) {
+             // A dimension whose text block has been slid to the right.
+             i.line(2, 7, 2, 20);
+             i.line(22, 7, 22, 20);
+             i.line(2, 10, 22, 10);
+             i.painter->setPen(i.accent);
+             i.painter->drawRect(QRectF{13.5, 12.5, 7, 5});
+         }},
+        {"DIMEDIT",
+         [](const Ink& i) {
+             // A dimension with its text being written over.
+             i.line(2, 7, 2, 20);
+             i.line(22, 7, 22, 20);
+             i.line(2, 10, 22, 10);
+             i.newLine(9, 18, 12, 12);
+             i.line(12, 12, 15, 18);
+             i.line(10, 16, 14, 16);
+         }},
         {"DIMBASELINE",
          [](const Ink& i) {
              // Two dimensions from one origin, the second a line further out.

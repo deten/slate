@@ -68,7 +68,7 @@ const std::vector<RibbonTab>& ribbonLayout() {
                {"POLYGON", kSmall},
                {"POINT", kSmall}}},
              {"Curves", {{"CIRCLE", kLarge}, {"ARC", kLarge}, {"ELLIPSE", kSmall}, {"SPLINE", kSmall}}},
-             {"Regions", {{"HATCH", kLarge}}},
+             {"Regions", {{"HATCH", kLarge}, {"HATCHEDIT", kSmall}}},
          }},
 
         // Annotation: what a sheet says. Text, then the measurements, then the
@@ -85,6 +85,8 @@ const std::vector<RibbonTab>& ribbonLayout() {
                {"DIMORDINATE", kSmall},
                {"DIMCONTINUE", kSmall},
                {"DIMBASELINE", kSmall},
+               {"DIMTEDIT", kSmall},
+               {"DIMEDIT", kSmall},
                {"DIMSTYLE", kSmall}}},
              // Its own group rather than filed under Dimensions: a leader
              // measures nothing. It points at something and says what it is,

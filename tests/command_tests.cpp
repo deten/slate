@@ -1021,6 +1021,50 @@ TEST_SUITE("Text commands") {
         CHECK_FALSE(texts[0]->styleHandle.isNull());
     }
 
+    TEST_CASE("TEXT Justify hangs the text off its point the way named") {
+        Harness h;
+        h.executor.execute("TEXT");
+        CHECK(h.executor.currentRequest()->prompt.find("[Justify]") != std::string::npos);
+        h.executor.supply(InputValue::makeKeyword("J"));
+        CHECK(h.executor.currentRequest()->kind == InputRequest::Kind::Keyword);
+        h.executor.supply(InputValue::makeKeyword("MC"));
+        CHECK(h.executor.currentRequest()->prompt.find("middle center point") != std::string::npos);
+        h.executor.supply(point(40, 30));
+        h.executor.supply(InputValue::makeNumber(5.0));
+        h.executor.supply(InputValue::makeNumber(0.0));
+        h.executor.supply(InputValue::makeText("ROOM"));
+        h.executor.supply(InputValue::makeEmpty());
+
+        const auto texts = h.ofType<TextEntity>();
+        REQUIRE(texts.size() == 1);
+        CHECK(texts[0]->horizontalAlignment == TextHorizontalAlignment::Center);
+        CHECK(texts[0]->verticalAlignment == TextVerticalAlignment::Middle);
+        REQUIRE(texts[0]->alignmentPoint.has_value());
+        CHECK_POINT(*texts[0]->alignmentPoint, Vec3(40, 30));
+        // Centred on the point, so the box straddles it.
+        const Box3 box = texts[0]->bounds();
+        CHECK(box.min.x < 40.0);
+        CHECK(box.max.x > 40.0);
+        CHECK(box.min.y < 30.0);
+        CHECK(box.max.y > 30.0);
+    }
+
+    TEST_CASE("TEXT Justify Middle is Middle, not one of the middle row") {
+        Harness h;
+        h.executor.execute("TEXT");
+        h.executor.supply(InputValue::makeKeyword("J"));
+        h.executor.supply(InputValue::makeText("M"));
+        h.executor.supply(point(0, 0));
+        h.executor.supply(InputValue::makeNumber(5.0));
+        h.executor.supply(InputValue::makeNumber(0.0));
+        h.executor.supply(InputValue::makeText("X"));
+        h.executor.supply(InputValue::makeEmpty());
+        const auto texts = h.ofType<TextEntity>();
+        REQUIRE(texts.size() == 1);
+        CHECK(texts[0]->horizontalAlignment == TextHorizontalAlignment::Middle);
+        CHECK(texts[0]->verticalAlignment == TextVerticalAlignment::Baseline);
+    }
+
     TEST_CASE("TEXT keeps prompting and stacks each line below the last") {
         Harness h;
         h.executor.execute("TEXT");
