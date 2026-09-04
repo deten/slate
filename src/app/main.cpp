@@ -75,6 +75,10 @@ int main(int argc, char* argv[]) {
     const QCommandLineOption agentReplyOption{
         "agent-reply",
         "Answer --agent from this file instead of a provider, for scripted runs.", "file"};
+    const QCommandLineOption agentReferenceOption{
+        "agent-reference", "Learn house standards from the drawings in this folder.", "folder"};
+    const QCommandLineOption agentContextOption{
+        "agent-context", "Print what the assistant is told about the drawing, without asking it."};
     const QCommandLineOption panelOption{
         "panel", "Show a dock panel: layers, properties, history, references.", "name"};
     const QCommandLineOption layoutOption{
@@ -121,6 +125,8 @@ int main(int argc, char* argv[]) {
     parser.addOption(dumpMenusOption);
     parser.addOption(agentOption);
     parser.addOption(agentReplyOption);
+    parser.addOption(agentReferenceOption);
+    parser.addOption(agentContextOption);
     parser.addOption(panelOption);
     parser.addOption(layoutOption);
     parser.addOption(menuPickOption);
@@ -152,6 +158,8 @@ int main(int argc, char* argv[]) {
                           parser.isSet(shiftClickOption) || parser.isSet(menuPickOption) ||
                           parser.isSet(layoutOption) || parser.isSet(panelOption) ||
                           parser.isSet(agentOption) || parser.isSet(agentReplyOption) ||
+                          parser.isSet(agentReferenceOption) ||
+                          parser.isSet(agentContextOption) ||
                           parser.isSet(dumpMenusOption) ||
                           parser.isSet(sizeOption) || parser.isSet(canvasOption);
     if (scripted || parser.isSet(noRecoveryOption)) {
@@ -220,12 +228,17 @@ int main(int argc, char* argv[]) {
                 window.dumpMenus();
                 continue;
             }
+            if (argument == "--agent-context") {
+                window.showAgentContext();
+                continue;
+            }
             const bool takesValue = argument == "--run" || argument == "--hover" ||
                                     argument == "--click" || argument == "--shift-click" ||
                                     argument == "--menu-pick" ||
                                     argument == "--layout" ||
                                     argument == "--panel" ||
                                     argument == "--agent" || argument == "--agent-reply" ||
+                                    argument == "--agent-reference" ||
                                     argument == "--double-click" || argument == "--right-hold" || argument == "--snap-menu" ||
                                     argument == "--type" || argument == "--key" ||
                                     argument == "--cycle" || argument == "--tab" ||
@@ -260,6 +273,8 @@ int main(int argc, char* argv[]) {
                 // Set before any --agent runs, so order on the command line
                 // matters and reads the way it is written.
                 window.useCannedAgentReply(value);
+            } else if (argument == "--agent-reference") {
+                window.useAgentReference(value);
             } else if (argument == "--agent") {
                 window.runAgent(value);
             } else if (argument == "--panel") {

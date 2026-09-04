@@ -7,9 +7,11 @@ local model you already use.
 ## What it actually does
 
 The model is not given the drawing database and cannot reach into it. It is
-given a short summary — how many of what, the extents, the layers, what is
-selected — and the list of commands this build has. It answers with commands,
-one per line:
+given a digest: the units, how many of what, the extents, each layer with its
+colour and linetype and what sits on it, the blocks and their attributes, the
+styles, the sheets, and each selected object in a line. With a reference
+folder set (below) it is also told the office's standards. And it gets the
+list of commands this build has. It answers with commands, one per line:
 
 ```
 RECTANGLE 0,0 400,300
@@ -42,6 +44,37 @@ drawing in a way nobody asked for while still reading as though it worked.
 | Model | The model name that service expects. |
 | API key | Your key with that service. |
 | Give up after | How long to wait before reporting that nothing came back. |
+| Reference folder | A folder of your own drawings, which the assistant learns your conventions from. |
+
+### The reference folder
+
+One drawing cannot tell a model which layer a wall goes on, what your door
+block is called, or what a dimension should look like. The drawings you have
+already made can. Point the reference folder at them and Slate reads every DWG
+and DXF in it, subfolders included, and boils them down to what they agree on:
+
+- each layer, with its usual colour and linetype, how many drawings have it
+  and how much sits on it
+- each block, how often it is placed, and the attributes it asks for
+- the text and dimension styles, the units, and the sheet sizes
+
+That summary goes into every request as "house standards", and the model is
+told to follow them: to put each kind of object on the layer you use for it,
+to reuse your block names, and to make a standard layer if the open drawing
+lacks it.
+
+Any `.txt` or `.md` file in the folder is passed along as written. That is
+the place to say what the drawings cannot: which layer is for what, what the
+office does and does not do, what a client wants. Keep it short.
+
+The folder is read once and the result kept in your settings folder. It is
+read again only when a file in it changes. The **Show** button reads it and
+shows exactly what the assistant will be told, so you can check what it has
+understood before trusting it. The first hundred drawings are read; if the
+folder is bigger than that, make a smaller one.
+
+The reference folder is read, never written. Nothing the assistant does
+touches the drawings in it.
 
 Because the chat-completions shape is so widely copied, "some service Slate has
 never heard of" and "a model running locally" are both handled by typing the
@@ -81,6 +114,16 @@ Slate.exe --agent-reply reply.txt --agent "draw a room" --save-as out.dxf
 `reply.txt` holds whatever a model would have said. This is how the automated
 tests cover the whole path: `tools/interaction_tests.py` drives the real
 application through it and checks the geometry that comes out.
+
+To see what the assistant would be told without asking it anything:
+
+```
+Slate.exe drawing.dxf --agent-context
+Slate.exe drawing.dxf --agent-reference "D:\Projects\Standards" --agent-context
+```
+
+The first prints the digest of the drawing. The second also reads the given
+folder as the reference folder for that run, whatever the settings say.
 
 ## What is not covered by the tests
 

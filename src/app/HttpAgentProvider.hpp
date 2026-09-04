@@ -32,6 +32,9 @@ struct AgentSettings {
     /// most likely way this feature costs somebody money.
     QString key;
     int timeoutSeconds = 60;
+    /// A folder of the office's drawings, read for the conventions they
+    /// share so the assistant can follow them. Empty means none.
+    QString referenceDirectory;
 
     /// Defaults for an API, so choosing a provider fills in a working endpoint
     /// and model rather than an empty box.

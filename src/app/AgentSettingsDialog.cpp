@@ -5,9 +5,13 @@
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDialogButtonBox>
+#include <QFileDialog>
 #include <QFormLayout>
+#include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
+#include <QPlainTextEdit>
+#include <QPushButton>
 #include <QSpinBox>
 #include <QVBoxLayout>
 
@@ -17,6 +21,7 @@ AgentSettingsDialog::AgentSettingsDialog(AgentSettings settings, QWidget* parent
     : QDialog(parent), settings_(std::move(settings)) {
     setWindowTitle(tr("AI Assistant"));
     setModal(true);
+    setMinimumWidth(560);
 
     auto* layout = new QVBoxLayout{this};
 
@@ -66,6 +71,26 @@ AgentSettingsDialog::AgentSettingsDialog(AgentSettings settings, QWidget* parent
     timeout_->setValue(settings_.timeoutSeconds);
     form->addRow(tr("Give up after"), timeout_);
 
+    // The office's drawings, which are where its conventions live.
+    reference_ = new QLineEdit{settings_.referenceDirectory, this};
+    reference_->setPlaceholderText(tr("A folder of your drawings"));
+    auto* browse = new QPushButton{tr("Browse..."), this};
+    auto* show = new QPushButton{tr("Show"), this};
+    show->setToolTip(tr("Read the folder and show what the assistant learns from it."));
+    auto* referenceRow = new QHBoxLayout;
+    referenceRow->addWidget(reference_, 1);
+    referenceRow->addWidget(browse);
+    referenceRow->addWidget(show);
+    form->addRow(tr("Reference folder"), referenceRow);
+
+    auto* referenceNote = new QLabel{
+        tr("The drawings in this folder are read once and the assistant learns your layer "
+           "names, colours, blocks and styles from them, so what it adds matches how you "
+           "already work. Notes in .txt or .md files there are passed along as written."),
+        this};
+    referenceNote->setWordWrap(true);
+    form->addRow(QString{}, referenceNote);
+
     auto* buttons =
         new QDialogButtonBox{QDialogButtonBox::Save | QDialogButtonBox::Cancel, this};
     connect(buttons, &QDialogButtonBox::accepted, this, &QDialog::accept);
@@ -74,6 +99,8 @@ AgentSettingsDialog::AgentSettingsDialog(AgentSettings settings, QWidget* parent
 
     connect(api_, &QComboBox::currentIndexChanged, this,
             [this] { applyApiDefaults(); });
+    connect(browse, &QPushButton::clicked, this, &AgentSettingsDialog::browseReference);
+    connect(show, &QPushButton::clicked, this, &AgentSettingsDialog::showStandards);
     refreshKeyNote();
 }
 
@@ -111,6 +138,41 @@ void AgentSettingsDialog::refreshKeyNote() {
                          "set the SLATE_AGENT_KEY environment variable instead."));
 }
 
+void AgentSettingsDialog::browseReference() {
+    const QString chosen =
+        QFileDialog::getExistingDirectory(this, tr("Reference folder"), reference_->text());
+    if (!chosen.isEmpty()) {
+        reference_->setText(chosen);
+    }
+}
+
+void AgentSettingsDialog::showStandards() {
+    const QString directory = reference_->text().trimmed();
+    QString text;
+    if (directory.isEmpty()) {
+        text = tr("Choose a folder first.");
+    } else if (preview_) {
+        text = preview_(directory);
+    }
+    if (text.isEmpty()) {
+        text = tr("Nothing was learned from %1.").arg(directory);
+    }
+
+    QDialog viewer{this};
+    viewer.setWindowTitle(tr("What the assistant learned"));
+    viewer.resize(720, 520);
+    auto* viewerLayout = new QVBoxLayout{&viewer};
+    auto* body = new QPlainTextEdit{text, &viewer};
+    body->setReadOnly(true);
+    body->setLineWrapMode(QPlainTextEdit::NoWrap);
+    viewerLayout->addWidget(body);
+    auto* close = new QDialogButtonBox{QDialogButtonBox::Close, &viewer};
+    connect(close, &QDialogButtonBox::rejected, &viewer, &QDialog::reject);
+    connect(close, &QDialogButtonBox::accepted, &viewer, &QDialog::accept);
+    viewerLayout->addWidget(close);
+    viewer.exec();
+}
+
 AgentSettings AgentSettingsDialog::settings() const {
     AgentSettings result = settings_;
     result.enabled = enabled_->isChecked();
@@ -119,6 +181,7 @@ AgentSettings AgentSettingsDialog::settings() const {
     result.model = model_->text().trimmed();
     result.key = key_->text().trimmed();
     result.timeoutSeconds = timeout_->value();
+    result.referenceDirectory = reference_->text().trimmed();
     return result;
 }
 

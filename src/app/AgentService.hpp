@@ -6,10 +6,14 @@
 #include <QStringList>
 
 #include "HttpAgentProvider.hpp"
+#include "ReferenceLibrary.hpp"
 #include "cad/agent/AgentPlan.hpp"
 
 namespace cad {
 class ConfigFile;
+}
+namespace cad::io {
+class DwgTranslator;
 }
 
 namespace cad::app {
@@ -56,15 +60,16 @@ struct AgentOutcome {
     [[nodiscard]] bool ok() const { return error.isEmpty(); }
 };
 
-/// Owns the assistant: its settings, which provider to use, and running one
-/// instruction against a drawing.
+/// Owns the assistant: its settings, which provider to use, what it is told
+/// about the office, and running one instruction against a drawing.
 ///
 /// Deliberately not a Qt object and not tied to a window, so the console path
 /// and the window path are the same code with a different way of asking
 /// whether to apply the plan.
 class AgentService {
 public:
-    explicit AgentService(ConfigFile& config);
+    AgentService(ConfigFile& config, const io::DwgTranslator* translator,
+                 QString cacheDirectory);
 
     [[nodiscard]] const AgentSettings& settings() const noexcept { return settings_; }
     void setSettings(const AgentSettings& settings);
@@ -72,6 +77,18 @@ public:
     /// Answer from this file rather than a provider, for scripted runs.
     void useCannedReply(const QString& path) { canned_ = path; }
     [[nodiscard]] bool isCanned() const { return !canned_.isEmpty(); }
+
+    /// Learn from this folder for this run, whatever the settings say.
+    void useReferenceDirectory(const QString& directory) { referenceOverride_ = directory; }
+    [[nodiscard]] QString referenceDirectory() const;
+
+    /// Everything the model is told about the drawing and the office, as it
+    /// would be sent. Reading it is how a person checks what the assistant
+    /// understands before trusting it with anything.
+    [[nodiscard]] QString context(Document& document, QStringList* log = nullptr);
+
+    /// What a folder teaches, with any trouble reading it, for showing.
+    [[nodiscard]] QString standardsPreview(const QString& directory);
 
     /// Ask for a plan. Nothing is applied.
     [[nodiscard]] AgentOutcome propose(const QString& instruction, Document& document);
@@ -81,10 +98,13 @@ public:
 
 private:
     [[nodiscard]] std::unique_ptr<AgentProvider> makeProvider() const;
+    [[nodiscard]] QString standards(QStringList* log);
 
     ConfigFile& config_;
     AgentSettings settings_;
+    ReferenceLibrary library_;
     QString canned_;
+    QString referenceOverride_;
 };
 
 }  // namespace cad::app

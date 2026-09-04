@@ -1,5 +1,6 @@
 #include "AgentService.hpp"
 
+#include <QDir>
 #include <QFile>
 #include <QFileInfo>
 
@@ -29,8 +30,11 @@ AgentReply CannedAgentProvider::send(const AgentRequest& request) {
     return reply;
 }
 
-AgentService::AgentService(ConfigFile& config)
-    : config_(config), settings_(AgentSettings::load(config)) {}
+AgentService::AgentService(ConfigFile& config, const io::DwgTranslator* translator,
+                           QString cacheDirectory)
+    : config_(config),
+      settings_(AgentSettings::load(config)),
+      library_(translator, std::move(cacheDirectory)) {}
 
 void AgentService::setSettings(const AgentSettings& settings) {
     settings_ = settings;
@@ -42,6 +46,51 @@ std::unique_ptr<AgentProvider> AgentService::makeProvider() const {
         return std::make_unique<CannedAgentProvider>(canned_);
     }
     return std::make_unique<HttpAgentProvider>(settings_);
+}
+
+QString AgentService::referenceDirectory() const {
+    return referenceOverride_.isEmpty() ? settings_.referenceDirectory : referenceOverride_;
+}
+
+QString AgentService::standards(QStringList* log) {
+    const QString directory = referenceDirectory();
+    if (directory.trimmed().isEmpty()) {
+        return {};
+    }
+    const ReferenceLibrary::Result result = library_.read(directory);
+    if (log != nullptr) {
+        if (!result.empty() && !result.fromCache) {
+            *log << QObject::tr("Read %n drawing(s) from %1.", "", result.drawings)
+                        .arg(QDir::toNativeSeparators(directory));
+        }
+        for (const QString& problem : result.problems) {
+            *log << QObject::tr("! %1").arg(problem);
+        }
+    }
+    return result.text;
+}
+
+QString AgentService::standardsPreview(const QString& directory) {
+    const ReferenceLibrary::Result result = library_.read(directory);
+    QString text = result.text;
+    if (!result.problems.isEmpty()) {
+        if (!text.isEmpty()) {
+            text += QLatin1Char('\n');
+        }
+        text += result.problems.join(QLatin1Char('\n'));
+    }
+    return text;
+}
+
+QString AgentService::context(Document& document, QStringList* log) {
+    const std::vector<Handle> selection = document.selection();
+    QString text = QString::fromStdString(describeDrawing(document.db(), selection));
+    const QString house = standards(log);
+    if (!house.isEmpty()) {
+        text += QLatin1Char('\n');
+        text += house;
+    }
+    return text;
 }
 
 AgentOutcome AgentService::propose(const QString& instruction, Document& document) {
@@ -61,10 +110,11 @@ AgentOutcome AgentService::propose(const QString& instruction, Document& documen
     outcome.log << QObject::tr("Asking %1...")
                        .arg(QString::fromStdString(provider->name()));
 
+    const std::string house = standards(&outcome.log).toStdString();
     std::string error;
     const std::vector<Handle> selection = document.selection();
     outcome.plan = requestAgentPlan(*provider, instruction.toStdString(), document.db(),
-                                    document.commands(), selection, &error);
+                                    document.commands(), selection, &error, house);
     if (!error.empty()) {
         outcome.error = redactKey(QString::fromStdString(error), settings_.key);
         return outcome;

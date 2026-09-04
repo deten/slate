@@ -33,6 +33,8 @@ qt_add_executable(cad_app WIN32
     AgentService.cpp
     AgentSettingsDialog.cpp
     HttpAgentProvider.cpp
+    ReferenceLibrary.cpp
+    ReferenceLibrary.hpp
     LayerOrdering.cpp
     LayerPanel.cpp
     LayerPanel.hpp

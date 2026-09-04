@@ -1794,11 +1794,17 @@ bool MainWindow::showRibbonTab(const QString& title) {
     return ribbon_ != nullptr && ribbon_->showTab(title);
 }
 
-void MainWindow::onAgentSettings() {
+AgentService& MainWindow::ensureAgent() {
     if (agent_ == nullptr) {
-        agent_ = std::make_unique<AgentService>(config_);
+        agent_ = std::make_unique<AgentService>(config_, translator_.get(), settingsDirectory());
     }
-    AgentSettingsDialog dialog{agent_->settings(), this};
+    return *agent_;
+}
+
+void MainWindow::onAgentSettings() {
+    AgentSettingsDialog dialog{ensureAgent().settings(), this};
+    dialog.setStandardsPreview(
+        [this](const QString& directory) { return agent_->standardsPreview(directory); });
     if (dialog.exec() != QDialog::Accepted) {
         return;
     }
@@ -1813,19 +1819,34 @@ void MainWindow::onAgentSettings() {
 }
 
 void MainWindow::useCannedAgentReply(const QString& path) {
-    if (agent_ == nullptr) {
-        agent_ = std::make_unique<AgentService>(config_);
+    ensureAgent().useCannedReply(path);
+}
+
+void MainWindow::useAgentReference(const QString& directory) {
+    ensureAgent().useReferenceDirectory(directory);
+}
+
+void MainWindow::showAgentContext() {
+    if (document_ == nullptr) {
+        return;
     }
-    agent_->useCannedReply(path);
+    // What the model would be told, line by line, so a person can read it
+    // without a key and without paying for the question.
+    QStringList notes;
+    const QString context = ensureAgent().context(*document_, &notes);
+    for (const QString& line : notes) {
+        log(line);
+    }
+    for (const QString& line : context.split(QLatin1Char('\n'))) {
+        log(line);
+    }
 }
 
 void MainWindow::runAgent(const QString& instruction) {
     if (document_ == nullptr) {
         return;
     }
-    if (agent_ == nullptr) {
-        agent_ = std::make_unique<AgentService>(config_);
-    }
+    ensureAgent();
 
     // The wait is honest about itself: a request goes to somebody else's
     // machine and takes as long as it takes. Without this the window simply
@@ -2597,10 +2618,7 @@ bool MainWindow::grabDialogTo(const QString& name, const QString& path) {
     } else if (name == "references") {
         dialog = std::make_unique<ReferenceManagerDialog>(*document_, this);
     } else if (name == "agent") {
-        if (agent_ == nullptr) {
-            agent_ = std::make_unique<AgentService>(config_);
-        }
-        dialog = std::make_unique<AgentSettingsDialog>(agent_->settings(), this);
+        dialog = std::make_unique<AgentSettingsDialog>(ensureAgent().settings(), this);
     } else {
         log(tr("! No dialog named \"%1\".").arg(name));
         return false;

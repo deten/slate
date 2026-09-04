@@ -691,6 +691,36 @@ def test_the_plan_is_shown_before_it_runs(work: Path) -> None:
            f"the step was applied without being reported:\n{log}")
 
 
+def test_the_assistant_learns_house_standards_from_a_reference_folder(work: Path) -> None:
+    """A folder of the office's drawings teaches the layers it uses.
+
+    One drawing cannot say which layer a wall belongs on. The drawings the
+    office already made can, and a note left beside them says the rest. Both
+    go into what the assistant is told, and --agent-context shows that text
+    without a key or a network.
+    """
+    reference = work / "reference"
+    reference.mkdir(exist_ok=True)
+    _, made = run(work, "ref-make", [
+        "--run", "LAYER", "--run", "S-REF-WALL", "--run", "1",
+        "--run", "LINE", "--run", "0,0", "--run", "300,0", "--run", "",
+    ])
+    shutil.copyfile(made, reference / "office-plan.dxf")
+    (reference / "layers.md").write_text("Walls go on S-REF-WALL.\n", encoding="utf-8")
+
+    log, _ = run(work, "agent-context", [
+        "--agent-reference", str(reference), "--agent-context",
+    ], save=False)
+    expect("House standards, learned from 1 drawing" in log,
+           f"the reference drawing was not read:\n{log}")
+    expect("S-REF-WALL: colour 1 (red), Continuous, in 1 drawing, 1 object (1 Line)" in log,
+           f"the layer and what sits on it were not reported:\n{log}")
+    expect("Notes from layers.md:" in log and "Walls go on S-REF-WALL." in log,
+           f"the note was not passed along:\n{log}")
+    expect("Layers (" in log and "0: colour 7" in log,
+           f"the open drawing's own layers were not described:\n{log}")
+
+
 def test_an_invented_command_is_refused_and_the_rest_still_run(work: Path) -> None:
     """A model naming a command that does not exist is the common failure."""
     reply = canned(work, "invented",
@@ -1312,6 +1342,7 @@ SCENARIOS = [
     test_the_assistant_draws_what_it_proposes,
     test_the_plan_is_shown_before_it_runs,
     test_an_invented_command_is_refused_and_the_rest_still_run,
+    test_the_assistant_learns_house_standards_from_a_reference_folder,
     test_a_step_the_drawing_rejects_does_not_stop_the_rest,
     test_an_assistant_edit_can_be_undone,
     test_without_a_key_it_says_so,

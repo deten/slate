@@ -106,6 +106,13 @@ public:
 
     /// Answer from a file instead of a provider, for scripted runs.
     void useCannedAgentReply(const QString& path);
+    /// Learn house standards from this folder for this run, whatever the
+    /// settings say.
+    void useAgentReference(const QString& directory);
+    /// Print what the assistant would be told, without asking it.
+    void showAgentContext();
+    /// The assistant, made on first use.
+    AgentService& ensureAgent();
 
     /// Switch to a layout by name, for scripted runs. False if there is none.
     bool showLayout(const QString& name);

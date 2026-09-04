@@ -1,5 +1,7 @@
 #pragma once
 
+#include <functional>
+
 #include <QDialog>
 
 #include "HttpAgentProvider.hpp"
@@ -25,6 +27,12 @@ class AgentSettingsDialog final : public QDialog {
 public:
     AgentSettingsDialog(AgentSettings settings, QWidget* parent = nullptr);
 
+    /// How to show what a reference folder teaches. Given a folder, returns
+    /// the text the assistant would be handed.
+    void setStandardsPreview(std::function<QString(const QString&)> preview) {
+        preview_ = std::move(preview);
+    }
+
     [[nodiscard]] AgentSettings settings() const;
 
 private:
@@ -32,8 +40,9 @@ private:
     /// API, but only when the user has not typed their own: silently replacing
     /// a self-hosted address with a vendor's would be worse than an empty box.
     void applyApiDefaults();
-
     void refreshKeyNote();
+    void browseReference();
+    void showStandards();
 
     QCheckBox* enabled_ = nullptr;
     QComboBox* api_ = nullptr;
@@ -42,6 +51,8 @@ private:
     QLineEdit* key_ = nullptr;
     QSpinBox* timeout_ = nullptr;
     QLabel* keyNote_ = nullptr;
+    QLineEdit* reference_ = nullptr;
+    std::function<QString(const QString&)> preview_;
     AgentSettings settings_;
 };
 

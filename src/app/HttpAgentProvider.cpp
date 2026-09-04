@@ -118,6 +118,8 @@ AgentSettings AgentSettings::load(const ConfigFile& config) {
     }
     settings.timeoutSeconds =
         static_cast<int>(config.integer(kSection, "timeout.seconds", 60));
+    settings.referenceDirectory =
+        QString::fromStdString(config.text(kSection, "reference.directory", ""));
 
     // The environment wins over the file. Somebody who would rather not leave a
     // key on disk can export it instead, and nothing here writes it back.
@@ -136,6 +138,7 @@ void AgentSettings::save(ConfigFile& config) const {
     config.set(kSection, "endpoint", endpoint.toStdString());
     config.set(kSection, "model", model.toStdString());
     config.set(kSection, "timeout.seconds", std::to_string(timeoutSeconds));
+    config.set(kSection, "reference.directory", referenceDirectory.toStdString());
     // Only written when it came from the box. A key supplied through the
     // environment is left there rather than being copied onto disk behind the
     // back of somebody who deliberately kept it off disk.

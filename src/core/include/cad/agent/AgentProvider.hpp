@@ -2,6 +2,7 @@
 
 #include <span>
 #include <string>
+#include <string_view>
 
 #include "cad/agent/AgentPlan.hpp"
 #include "cad/db/Handle.hpp"
@@ -81,6 +82,7 @@ public:
                                          const std::string& instruction, const Database& db,
                                          const CommandRegistry& registry,
                                          std::span<const Handle> selection,
-                                         std::string* error);
+                                         std::string* error,
+                                         std::string_view standards = {});
 
 }  // namespace cad
