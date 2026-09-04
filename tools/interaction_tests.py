@@ -671,6 +671,30 @@ def test_hatch_picked_inside_a_room_traces_the_walls(work: Path) -> None:
     expect(hatches[0].get("93") == "4", f"expected four edges, got {hatches[0].get('93')}")
 
 
+def test_xattach_brings_another_drawing_in_as_a_reference(work: Path) -> None:
+    """A second drawing attached shows its geometry and saves as a reference.
+
+    The block record carries the path and the reference flags, the insert
+    points at it by name, and the contents were actually loaded, so the
+    circle is on screen and not merely promised.
+    """
+    _, other = run(work, "xref-source", ["--run", "CIRCLE", "--run", "0,0", "--run", "25"])
+    log, saved = run(work, "xref-host", [
+        "--run", "XATTACH", "--run", str(other), "--run", "",
+        "--run", "100,100", "--run", "", "--run", "",
+    ])
+    expect("Reference xref-source loaded: 1 object(s)" in log,
+           f"the reference was not loaded:\n{log}")
+    expect('Reference "xref-source" attached' in log, f"the attach was not reported:\n{log}")
+    blocks = [b for b in records(saved, "BLOCK") if b.get("2") == "xref-source"]
+    expect(len(blocks) == 1, f"expected one block record for the reference:\n{blocks}")
+    expect("xref-source" in blocks[0].get("1", ""), f"the block has no path:\n{blocks[0]}")
+    expect(int(blocks[0].get("70", "0")) & 4 == 4, f"the block is not flagged as a reference:\n{blocks[0]}")
+    inserts = [i for i in records(saved, "INSERT") if i.get("2") == "xref-source"]
+    expect(len(inserts) == 1, f"expected one insert of the reference:\n{inserts}")
+    expect(inserts[0].get("10", "").startswith("100"), f"the insert is not at 100,100:\n{inserts[0]}")
+
+
 def test_the_assistant_draws_what_it_proposes(work: Path) -> None:
     """A sentence in, geometry out, with no network in the way.
 
@@ -1362,6 +1386,7 @@ SCENARIOS = [
     test_two_marked_arc_ends_move_by_one_displacement,
     test_dragging_one_arc_end_keeps_the_centre,
     test_hatch_picked_inside_a_room_traces_the_walls,
+    test_xattach_brings_another_drawing_in_as_a_reference,
     test_the_assistant_draws_what_it_proposes,
     test_the_plan_is_shown_before_it_runs,
     test_an_invented_command_is_refused_and_the_rest_still_run,

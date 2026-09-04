@@ -683,6 +683,15 @@ void letterA(const Ink& ink, qreal x, qreal y, qreal h) {
              i.line(22, 8, 22, 16);
              i.newLine(12, 12, 22, 12);
          }},
+        {"XATTACH",
+         [](const Ink& i) {
+             // A sheet with another sheet clipped onto its corner.
+             i.rect(3, 3, 12, 15);
+             i.painter->setPen(i.accent);
+             i.painter->drawRect(QRectF{9.5, 9.5, 11, 11});
+             i.painter->drawLine(QPointF{12, 15}, QPointF{18, 15});
+             i.painter->drawLine(QPointF{15, 12}, QPointF{15, 18});
+         }},
         {"ATTSYNC",
          [](const Ink& i) {
              // Two tags, the second being brought into line with the first.

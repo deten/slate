@@ -867,6 +867,9 @@ std::unique_ptr<Document> MainWindow::makeDocument() {
                 [this] { onPurge(); },
                 [this](const std::string& instruction) {
                     runAgent(QString::fromStdString(instruction));
+                },
+                [this](const std::string& path, bool overlay, Handle* block) {
+                    return attachExternalReference(path, overlay, block);
                 });
             commands.insert(commands.end(), std::make_move_iterator(view.begin()),
                             std::make_move_iterator(view.end()));
@@ -3477,6 +3480,62 @@ void MainWindow::onPurge() {
     // that has changed underneath it.
     canvas_->reload();
     refreshLayerPanel();
+}
+
+std::string MainWindow::attachExternalReference(const std::string& path, bool overlay,
+                                                Handle* block) {
+    if (document_ == nullptr) {
+        return "No drawing is open.";
+    }
+    const std::filesystem::path file{QString::fromStdString(path).toStdWString()};
+    if (!std::filesystem::exists(file)) {
+        return "There is no file at " + path + ".";
+    }
+    Database& db = document_->db();
+    const std::string name = file.stem().string();
+    if (BlockTableRecord* existing = db.findBlock(name); existing != nullptr) {
+        if (!existing->isXref()) {
+            return "A block named \"" + name + "\" already exists and is not a reference.";
+        }
+        // Already attached: this is another reference to the same file.
+        *block = existing->handle;
+        return {};
+    }
+
+    auto record = std::make_unique<BlockTableRecord>();
+    record->name = name;
+    record->xrefType = overlay ? XrefType::Overlay : XrefType::Attachment;
+    record->xrefPath = file.string();
+    BlockTableRecord& added = db.addBlock(std::move(record));
+
+    io::XrefLoadOptions options;
+    options.translator = translator_.get();
+    options.onProgress = [this](const std::string& message) {
+        log(QString::fromStdString(message));
+        QCoreApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
+    };
+    const std::filesystem::path host =
+        document_->filePath.empty()
+            ? std::filesystem::path{}
+            : std::filesystem::path{QString::fromStdString(document_->filePath).toStdWString()};
+    io::XrefLoader loader{db};
+    const io::XrefLoadResult result = loader.loadReference(added, host, options);
+    for (const io::DxfDiagnostic& diagnostic : result.diagnostics) {
+        log(QString::fromStdString(diagnostic.message));
+    }
+    for (const io::XrefNode& node : result.nodes) {
+        if (node.blockHandle != added.handle) {
+            continue;
+        }
+        if (node.status != XrefStatus::Resolved) {
+            return node.problem.empty() ? "The reference could not be loaded." : node.problem;
+        }
+        log(tr("Reference %1 loaded: %2 object(s)")
+                .arg(QString::fromStdString(name))
+                .arg(node.entityCount));
+    }
+    *block = added.handle;
+    return {};
 }
 
 void MainWindow::onReferenceManager() {

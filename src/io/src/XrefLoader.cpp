@@ -63,6 +63,32 @@ XrefLoadResult XrefLoader::loadAll(const std::filesystem::path& hostPath,
     return result;
 }
 
+XrefLoadResult XrefLoader::loadReference(BlockTableRecord& block,
+                                         const std::filesystem::path& hostPath,
+                                         const XrefLoadOptions& options) {
+    ResolverOptions resolverOptions;
+    if (!hostPath.empty()) {
+        resolverOptions.hostDirectory = std::filesystem::absolute(hostPath).parent_path();
+        loading_.insert(std::filesystem::absolute(hostPath).lexically_normal());
+    }
+    resolverOptions.searchPaths = options.searchPaths;
+    ResourceResolver resolver{std::move(resolverOptions)};
+
+    loadOne(block, resolver, 0, options);
+
+    XrefLoadResult result;
+    result.nodes = std::move(nodes_);
+    result.diagnostics = std::move(diagnostics_);
+    for (const XrefNode& node : result.nodes) {
+        if (node.status == XrefStatus::Resolved) {
+            ++result.resolvedCount;
+        } else {
+            ++result.failedCount;
+        }
+    }
+    return result;
+}
+
 void XrefLoader::loadInto(Database& database, ResourceResolver& resolver, int depth,
                           const XrefLoadOptions& options) {
     if (depth > options.maxDepth) {

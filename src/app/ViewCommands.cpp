@@ -2,7 +2,10 @@
 
 #include "CanvasWidget.hpp"
 #include "Document.hpp"
+#include <cctype>
+
 #include "cad/db/BlockTableRecord.hpp"
+#include "cad/db/InsertEntity.hpp"
 #include "cad/db/Layout.hpp"
 #include "cad/db/ViewportEntity.hpp"
 #include "cad/render/Scene.hpp"
@@ -568,6 +571,121 @@ private:
     std::string what_;
 };
 
+/// XATTACH — bring another drawing in as an external reference.
+///
+/// The file, whether it is attached or overlaid, then where and how big, the
+/// way INSERT asks. The block record and its contents come from the window,
+/// which has the file layer; the reference placed here is an ordinary insert
+/// in the transaction, so undo takes it away like any other.
+class AttachXrefCommand final : public CommandInstance {
+public:
+    explicit AttachXrefCommand(AttachXrefHook attach) : attach_(std::move(attach)) {}
+
+    StepResult start(CommandContext& /*context*/) override {
+        if (!attach_) {
+            return StepResult::failed("Attaching a reference needs the file layer, which is "
+                                      "unavailable here.");
+        }
+        InputRequest request;
+        request.kind = InputRequest::Kind::Text;
+        request.prompt = "Enter the drawing file to attach";
+        return StepResult::ask(request);
+    }
+
+    StepResult supply(const InputValue& input, CommandContext& context) override {
+        if (input.kind == InputValue::Kind::Cancel) {
+            return StepResult::cancelled();
+        }
+        switch (stage_) {
+            case Stage::Path: {
+                if (input.kind != InputValue::Kind::Text || input.text.empty()) {
+                    return StepResult::cancelled("No file given");
+                }
+                path_ = input.text;
+                stage_ = Stage::Type;
+                InputRequest request;
+                request.kind = InputRequest::Kind::Keyword;
+                request.prompt = "Reference type [Attach/Overlay]";
+                request.defaultText = "Attach";
+                request.allowEmpty = true;
+                request.keywords = {
+                    CommandKeyword{"Attach", "A", "Carried along when this drawing is itself referenced"},
+                    CommandKeyword{"Overlay", "O", "Seen here only, not through further references"}};
+                return StepResult::ask(request);
+            }
+            case Stage::Type: {
+                overlay_ = (input.kind == InputValue::Kind::Keyword ||
+                            input.kind == InputValue::Kind::Text) &&
+                           !input.text.empty() &&
+                           std::toupper(static_cast<unsigned char>(input.text.front())) == 'O';
+                const std::string problem = attach_(path_, overlay_, &block_);
+                if (!problem.empty()) {
+                    return StepResult::failed(problem);
+                }
+                stage_ = Stage::Point;
+                InputRequest request;
+                request.kind = InputRequest::Kind::Point;
+                request.prompt = "Specify insertion point";
+                return StepResult::ask(request);
+            }
+            case Stage::Point: {
+                if (input.kind != InputValue::Kind::Point) {
+                    return StepResult::cancelled();
+                }
+                position_ = input.point;
+                stage_ = Stage::Scale;
+                InputRequest request;
+                request.kind = InputRequest::Kind::Number;
+                request.prompt = "Specify scale factor";
+                request.defaultNumber = 1.0;
+                request.allowEmpty = true;
+                request.minimum = 1e-9;
+                return StepResult::ask(request);
+            }
+            case Stage::Scale: {
+                if (input.kind == InputValue::Kind::Number && input.number > 0.0) {
+                    scale_ = input.number;
+                }
+                stage_ = Stage::Rotation;
+                InputRequest request;
+                request.kind = InputRequest::Kind::Angle;
+                request.prompt = "Specify rotation angle";
+                request.defaultNumber = 0.0;
+                request.allowEmpty = true;
+                return StepResult::ask(request);
+            }
+            case Stage::Rotation:
+            default: {
+                if (input.kind == InputValue::Kind::Number) {
+                    rotation_ = input.number;
+                }
+                const auto* block = context.db().get<BlockTableRecord>(block_);
+                if (block == nullptr) {
+                    return StepResult::failed("The reference's block is gone.");
+                }
+                auto reference = std::make_unique<InsertEntity>(block_, position_);
+                reference->scale = Vec3{scale_, scale_, scale_};
+                reference->rotation = rotation_;
+                context.transaction().addToCurrentSpace(std::move(reference));
+                return StepResult::done("Reference \"" + block->name + "\" " +
+                                        (overlay_ ? "overlaid" : "attached"));
+            }
+        }
+    }
+
+private:
+    enum class Stage : std::uint8_t { Path, Type, Point, Scale, Rotation };
+
+    AttachXrefHook attach_;
+    Stage stage_ = Stage::Path;
+    std::string path_;
+    bool overlay_ = false;
+    Handle block_;
+    Vec3 position_;
+    double scale_ = 1.0;
+    double rotation_ = 0.0;
+};
+
 [[nodiscard]] CommandDefinition makeDefinition(std::string id, std::string name,
                                                std::vector<std::string> aliases,
                                                std::string title, std::string description,
@@ -630,8 +748,24 @@ std::vector<CommandDefinition> viewCommands(CanvasWidget* canvas,
                                             std::function<void()> quickSelect,
                                             std::function<void()> references,
                                             std::function<void()> purge,
-                                            std::function<void(const std::string&)> assistant) {
+                                            std::function<void(const std::string&)> assistant,
+                                            AttachXrefHook attachXref) {
     std::vector<CommandDefinition> commands;
+
+    {
+        CommandDefinition definition;
+        definition.id = "cad.insert.xattach";
+        definition.name = "XATTACH";
+        definition.aliases = {"XA"};
+        definition.title = "Attach Reference";
+        definition.description = "Bring another drawing in as an external reference";
+        definition.category = "Insert";
+        definition.supportsPickfirst = false;
+        definition.create = [attachXref] {
+            return std::make_unique<AttachXrefCommand>(attachXref);
+        };
+        commands.push_back(std::move(definition));
+    }
 
     {
         CommandDefinition layout = makeDefinition(

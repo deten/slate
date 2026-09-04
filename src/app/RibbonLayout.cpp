@@ -128,6 +128,7 @@ const std::vector<RibbonTab>& ribbonLayout() {
                {"ATTDEF", kSmall},
                {"ATTEDIT", kSmall},
                {"ATTSYNC", kSmall}}},
+             {"External", {{"XATTACH", kLarge}}},
              {"Reference", {{"REFERENCES", kLarge}}},
          }},
 

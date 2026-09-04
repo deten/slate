@@ -28,10 +28,16 @@ class CanvasWidget;
 ///   is no such tab. A callback rather than a Document pointer because
 ///   switching sheets also has to refresh the tab bar and the view, which is
 ///   the window's business rather than the document's.
+/// Attach a drawing file as an external reference: make its block record and
+/// load its contents. Returns the problem, or an empty string and the block's
+/// handle. Given by the window because loading needs the file layer.
+using AttachXrefHook =
+    std::function<std::string(const std::string& path, bool overlay, Handle* block)>;
+
 [[nodiscard]] std::vector<CommandDefinition> viewCommands(
     CanvasWidget* canvas, std::function<bool(const std::string&)> switchLayout = {},
     std::function<void()> quickSelect = {},
     std::function<void()> references = {}, std::function<void()> purge = {},
-    std::function<void(const std::string&)> assistant = {});
+    std::function<void(const std::string&)> assistant = {}, AttachXrefHook attachXref = {});
 
 }  // namespace cad::app

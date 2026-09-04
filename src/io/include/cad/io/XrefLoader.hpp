@@ -134,6 +134,15 @@ public:
     [[nodiscard]] XrefLoadResult loadAll(const std::filesystem::path& hostPath,
                                          const XrefLoadOptions& options = {});
 
+    /// Load one reference that was just attached, leaving the others alone.
+    ///
+    /// Loading fills the block by appending, so a reference that is already
+    /// resolved must not be loaded again; this is the way to bring in a new
+    /// one without touching those.
+    [[nodiscard]] XrefLoadResult loadReference(BlockTableRecord& block,
+                                               const std::filesystem::path& hostPath,
+                                               const XrefLoadOptions& options = {});
+
 private:
     void loadInto(Database& database, ResourceResolver& resolver, int depth,
                   const XrefLoadOptions& options);

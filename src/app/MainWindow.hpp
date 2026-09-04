@@ -271,6 +271,10 @@ private Q_SLOTS:
 
     void onPurge();
     void onReferenceManager();
+    /// Make the block record for a drawing attached as an external reference
+    /// and load its contents. Returns the problem, or empty and the handle.
+    [[nodiscard]] std::string attachExternalReference(const std::string& path, bool overlay,
+                                                      Handle* block);
     void onSelectionChanged();
     void onCommandStateChanged();
     void onUndo();
