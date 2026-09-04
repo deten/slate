@@ -4,6 +4,7 @@
 
 #include <memory>
 #include <string>
+#include <tuple>
 
 #include "cad/command/CommandExecutor.hpp"
 #include "cad/command/StandardCommands.hpp"
@@ -76,6 +77,160 @@ struct AttributeHarness {
 }
 
 }  // namespace
+
+namespace {
+
+[[nodiscard]] std::size_t liveEntitiesIn(Database& db, const BlockTableRecord& block) {
+    std::size_t count = 0;
+    for (const Entity* entity : db.entitiesIn(block)) {
+        if (entity != nullptr && !entity->erased) {
+            ++count;
+        }
+    }
+    return count;
+}
+
+[[nodiscard]] const AttributeEntity* attributeOf(Database& db, const InsertEntity& insert,
+                                                 const char* tag) {
+    for (const Handle handle : insert.attributeHandles) {
+        const auto* attribute = db.get<AttributeEntity>(handle);
+        if (attribute != nullptr && !attribute->erased && attribute->tag == tag) {
+            return attribute;
+        }
+    }
+    return nullptr;
+}
+
+}  // namespace
+
+TEST_CASE("BLOCK asks before redefining a block, and No keeps it as it was") {
+    AttributeHarness h;
+    h.makeTagBlock();
+    const Handle circle =
+        h.db->addToModelSpace(std::make_unique<CircleEntity>(Vec3{0.0, 0.0, 0.0}, 3.0)).handle;
+    h.selection.setSelection({circle});
+    REQUIRE(h.executor.execute("BLOCK").status == CommandOutcome::Status::Running);
+    h.executor.supply(at(0.0, 0.0));
+    h.executor.supply(InputValue::makeText("TAG"));
+    REQUIRE(h.executor.currentRequest() != nullptr);
+    CHECK(h.executor.currentRequest()->kind == InputRequest::Kind::Keyword);
+    CHECK(h.executor.supply(InputValue::makeKeyword("N")).status ==
+          CommandOutcome::Status::Cancelled);
+    CHECK(liveEntitiesIn(*h.db, *h.db->findBlock("TAG")) == 2);
+    CHECK(h.inModel<CircleEntity>().size() == 1);
+}
+
+TEST_CASE("BLOCK redefined with Yes replaces the contents and updates every reference") {
+    AttributeHarness h;
+    h.makeTagBlock();
+    const Handle first = h.insertTag(Vec3{100.0, 0.0, 0.0}, "KITCHEN").handle;
+    const Handle second = h.insertTag(Vec3{200.0, 0.0, 0.0}, "BATH").handle;
+
+    // The revised block: a circle instead of the line, ROOM moved up, and a
+    // NUMBER tag that did not exist before.
+    const Handle circle =
+        h.db->addToModelSpace(std::make_unique<CircleEntity>(Vec3{0.0, 0.0, 0.0}, 3.0)).handle;
+    auto room = std::make_unique<AttributeDefinitionEntity>();
+    room->tag = "ROOM";
+    room->defaultValue = "OFFICE";
+    room->position = {0.0, 10.0, 0.0};
+    room->height = 5.0;
+    const Handle roomDefinition = h.db->addToModelSpace(std::move(room)).handle;
+    auto number = std::make_unique<AttributeDefinitionEntity>();
+    number->tag = "NUMBER";
+    number->defaultValue = "000";
+    number->position = {0.0, 20.0, 0.0};
+    number->height = 5.0;
+    const Handle numberDefinition = h.db->addToModelSpace(std::move(number)).handle;
+
+    h.selection.setSelection({circle, roomDefinition, numberDefinition});
+    REQUIRE(h.executor.execute("BLOCK").status == CommandOutcome::Status::Running);
+    h.executor.supply(at(0.0, 0.0));
+    h.executor.supply(InputValue::makeText("TAG"));
+    CHECK(h.executor.supply(InputValue::makeKeyword("Y")).status ==
+          CommandOutcome::Status::Completed);
+
+    const BlockTableRecord* block = h.db->findBlock("TAG");
+    REQUIRE(block != nullptr);
+    CHECK(liveEntitiesIn(*h.db, *block) == 3);
+    for (const Entity* entity : h.db->entitiesIn(*block)) {
+        CHECK((entity->erased || dynamic_cast<const LineEntity*>(entity) == nullptr));
+    }
+
+    // Both earlier references keep their words, get the new tag at its
+    // default, and have every attribute where the new definitions put it.
+    for (const auto [handle, value, x] : {std::tuple{first, "KITCHEN", 100.0},
+                                          std::tuple{second, "BATH", 200.0}}) {
+        const auto* insert = h.db->get<InsertEntity>(handle);
+        REQUIRE(insert != nullptr);
+        CHECK(insert->attributeHandles.size() == 2);
+        const AttributeEntity* roomValue = attributeOf(*h.db, *insert, "ROOM");
+        REQUIRE(roomValue != nullptr);
+        CHECK(roomValue->contents == value);
+        CHECK(roomValue->position.equals(Vec3{x, 10.0, 0.0}, Tolerance{1e-9}));
+        const AttributeEntity* numberValue = attributeOf(*h.db, *insert, "NUMBER");
+        REQUIRE(numberValue != nullptr);
+        CHECK(numberValue->contents == "000");
+        CHECK(numberValue->position.equals(Vec3{x, 20.0, 0.0}, Tolerance{1e-9}));
+    }
+    // And BLOCK left a reference in place of the sources, as it always does.
+    CHECK(h.inModel<InsertEntity>().size() == 3);
+
+    // The whole revision undoes as one step.
+    h.tm.undo();
+    CHECK(liveEntitiesIn(*h.db, *h.db->findBlock("TAG")) == 2);
+    CHECK(h.db->get<InsertEntity>(first)->attributeHandles.size() == 1);
+}
+
+TEST_CASE("ATTSYNC brings references up to date after their block's definitions change") {
+    AttributeHarness h;
+    BlockTableRecord& block = h.makeTagBlock();
+    const Handle placed = h.insertTag(Vec3{50.0, 50.0, 0.0}, "HALL").handle;
+
+    // The block is revised behind the references' backs: ROOM moves, NUMBER
+    // appears.
+    for (Entity* entity : h.db->entitiesIn(block)) {
+        if (auto* definition = dynamic_cast<AttributeDefinitionEntity*>(entity);
+            definition != nullptr && definition->tag == "ROOM") {
+            definition->position = {10.0, 30.0, 0.0};
+        }
+    }
+    auto number = std::make_unique<AttributeDefinitionEntity>();
+    number->tag = "NUMBER";
+    number->defaultValue = "101";
+    number->position = {0.0, -10.0, 0.0};
+    number->height = 5.0;
+    const Handle numberDefinition = h.db->addEntity(std::move(number), block).handle;
+
+    REQUIRE(h.executor.execute("ATTSYNC").status == CommandOutcome::Status::Running);
+    CHECK(h.executor.currentRequest()->kind == InputRequest::Kind::Text);
+    CHECK(h.executor.supply(InputValue::makeText("TAG")).status ==
+          CommandOutcome::Status::Completed);
+
+    const auto* insert = h.db->get<InsertEntity>(placed);
+    REQUIRE(insert != nullptr);
+    CHECK(insert->attributeHandles.size() == 2);
+    const AttributeEntity* room = attributeOf(*h.db, *insert, "ROOM");
+    REQUIRE(room != nullptr);
+    CHECK(room->contents == "HALL");
+    CHECK(room->position.equals(Vec3{60.0, 80.0, 0.0}, Tolerance{1e-9}));
+    const AttributeEntity* numberValue = attributeOf(*h.db, *insert, "NUMBER");
+    REQUIRE(numberValue != nullptr);
+    CHECK(numberValue->contents == "101");
+    CHECK(numberValue->position.equals(Vec3{50.0, 40.0, 0.0}, Tolerance{1e-9}));
+
+    // A definition taken away takes its attribute with it, and picking a
+    // reference names the block as well as typing does.
+    h.db->get<AttributeDefinitionEntity>(numberDefinition)->erased = true;
+    REQUIRE(h.executor.execute("ATTSYNC").status == CommandOutcome::Status::Running);
+    h.executor.supply(InputValue::makeKeyword("S"));
+    CHECK(h.executor.supply(InputValue::makeEntity(placed)).status ==
+          CommandOutcome::Status::Completed);
+    insert = h.db->get<InsertEntity>(placed);
+    CHECK(insert->attributeHandles.size() == 1);
+    CHECK(attributeOf(*h.db, *insert, "NUMBER") == nullptr);
+    CHECK(attributeOf(*h.db, *insert, "ROOM")->contents == "HALL");
+}
 
 TEST_CASE("ATTDEF makes a definition with its tag, prompt, default and modes") {
     AttributeHarness h;

@@ -683,6 +683,16 @@ void letterA(const Ink& ink, qreal x, qreal y, qreal h) {
              i.line(22, 8, 22, 16);
              i.newLine(12, 12, 22, 12);
          }},
+        {"ATTSYNC",
+         [](const Ink& i) {
+             // Two tags, the second being brought into line with the first.
+             i.rect(3, 4, 9, 6);
+             i.rect(12, 14, 9, 6);
+             i.newLine(12, 7, 17, 7);
+             i.line(17, 7, 17, 13);
+             i.line(15, 11, 17, 13);
+             i.line(19, 11, 17, 13);
+         }},
         {"HATCHEDIT",
          [](const Ink& i) {
              // A hatched box with its strokes being redrawn: two of them in

@@ -122,7 +122,12 @@ const std::vector<RibbonTab>& ribbonLayout() {
 
         {"Insert",
          {
-             {"Block", {{"INSERT", kLarge}, {"BLOCK", kLarge}, {"ATTDEF", kSmall}, {"ATTEDIT", kSmall}}},
+             {"Block",
+              {{"INSERT", kLarge},
+               {"BLOCK", kLarge},
+               {"ATTDEF", kSmall},
+               {"ATTEDIT", kSmall},
+               {"ATTSYNC", kSmall}}},
              {"Reference", {{"REFERENCES", kLarge}}},
          }},
 
