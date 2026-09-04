@@ -768,6 +768,16 @@ void letterA(const Ink& ink, qreal x, qreal y, qreal h) {
              i.newLine(21, 13, 19, 11);
              i.newLine(19, 11, 12, 18);
          }},
+        {"VPLAYER",
+         [](const Ink& i) {
+             // A viewport with one of its layers, a stack of three, crossed out.
+             i.rect(3, 4, 18, 16);
+             i.line(7, 9, 17, 9);
+             i.line(7, 12, 17, 12);
+             i.newLine(7, 15, 17, 15);
+             i.line(15, 13, 19, 17);
+             i.line(19, 13, 15, 17);
+         }},
         {"MVIEW",
          [](const Ink& i) {
              // A sheet with a new window cut into it, the model showing through.

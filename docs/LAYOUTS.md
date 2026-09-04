@@ -17,7 +17,8 @@ tabs, and every command adds through `Transaction::addToCurrentSpace`.
 | Command | What it does |
 |---|---|
 | `LAYOUT` (LO) | Switch to a sheet by name. `New` makes one (A4 landscape, 1:1, 10 mm margins), `Delete` removes one with everything on it, `Rename` renames one. All three undo. |
-| `MVIEW` (MV) | On a sheet: a viewport by two corners, or `Fit` to fill the printable area. Then a scale as `1:100` (or just `100`), or `Fit` to zoom the model's extents into the window. |
+| `MVIEW` (MV) | On a sheet: a viewport by two corners, or `Fit` to fill the printable area. Then a scale as `1:100` (or just `100`), or `Fit` to zoom the model's extents into the window. `Lock` locks or unlocks the view of existing viewports: a locked viewport keeps its scale and position while you work through it, and zooming or panning moves the sheet instead. |
+| `VPLAYER` | Freeze and thaw layers in particular viewports, so one model serves a demolition sheet and a new-work sheet. `Freeze` and `Thaw` take layer names, several separated by commas, with `*` and `?` wildcards, then `All` viewports on the sheet or a selection. `Reset` thaws everything in the chosen viewports; `List` says what each viewport freezes. Model space and the other sheets are untouched. |
 | `PAGESETUP` | Paper (A4 to A0, Letter, Legal, Tabloid), orientation, and the plot scale for the current sheet. Enter keeps a setting as it is. |
 
 A viewport's scale is paper to model: at `1:50`, one paper unit shows fifty

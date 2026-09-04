@@ -199,7 +199,7 @@ void CanvasWidget::zoomToBox(const Box3& box) {
 }
 
 void CanvasWidget::panBy(const Vec3& displacement) {
-    if (ViewportEntity* window = activeWindow()) {
+    if (ViewportEntity* window = activeWindow(); window != nullptr && !window->locked) {
         window->viewCenter = window->viewCenter - displacement;
         refreshSpaceTransform();
         Q_EMIT viewChanged();
@@ -2175,7 +2175,7 @@ void CanvasWidget::mouseMoveEvent(QMouseEvent* event) {
 
     if (panning_) {
         const QPointF delta = position - lastMousePosition_;
-        if (ViewportEntity* window = activeWindow()) {
+        if (ViewportEntity* window = activeWindow(); window != nullptr && !window->locked) {
             // The model slides behind the frame by what the cursor moved.
             const Vec3 before = toWorld({lastMousePosition_.x(), lastMousePosition_.y()});
             const Vec3 after = toWorld({position.x(), position.y()});
@@ -2327,7 +2327,7 @@ void CanvasWidget::wheelEvent(QWheelEvent* event) {
     // about the view centre would force a pan after every wheel notch.
     const QPointF position = event->position();
     const double factor = std::pow(1.2, steps);
-    if (ViewportEntity* window = activeWindow()) {
+    if (ViewportEntity* window = activeWindow(); window != nullptr && !window->locked) {
         // Inside a viewport the model zooms behind a fixed frame: the model
         // point under the cursor stays under it, the frame does not move.
         const Vec3 anchor = toWorld({position.x(), position.y()});

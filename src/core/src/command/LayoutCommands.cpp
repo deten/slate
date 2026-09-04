@@ -15,6 +15,7 @@
 #include "cad/command/StandardCommands.hpp"
 #include "cad/db/BlockTableRecord.hpp"
 #include "cad/db/CurveEntities.hpp"
+#include "cad/db/Layer.hpp"
 #include "cad/db/Layout.hpp"
 #include "cad/db/ViewportEntity.hpp"
 
@@ -99,12 +100,63 @@ public:
                     stage_ = Stage::Scale;
                     return askScale();
                 }
+                if (input.kind == InputValue::Kind::Keyword && matchesKeyword(input.text, 'L')) {
+                    stage_ = Stage::LockState;
+                    InputRequest request;
+                    request.kind = InputRequest::Kind::Keyword;
+                    request.prompt = "Viewport view locking [ON/OFF]";
+                    request.defaultText = "ON";
+                    request.allowEmpty = true;
+                    request.keywords = {CommandKeyword{"ON", "ON", "Keep the view as it is"},
+                                        CommandKeyword{"OFF", "OFF", "Let the view be changed"}};
+                    return StepResult::ask(request);
+                }
                 if (input.kind != InputValue::Kind::Point) {
                     return askCorner();
                 }
                 first_ = input.point;
                 stage_ = Stage::SecondCorner;
                 return askOpposite();
+
+            case Stage::LockState: {
+                lock_ = true;
+                if ((input.kind == InputValue::Kind::Keyword || input.kind == InputValue::Kind::Text) &&
+                    input.text.size() >= 2 &&
+                    std::toupper(static_cast<unsigned char>(input.text[1])) == 'F') {
+                    lock_ = false;
+                }
+                stage_ = Stage::LockSelect;
+                InputRequest request;
+                request.kind = InputRequest::Kind::Selection;
+                request.prompt = lock_ ? "Select viewports to lock" : "Select viewports to unlock";
+                request.minCount = 1;
+                return StepResult::ask(request);
+            }
+
+            case Stage::LockSelect: {
+                std::vector<Handle> handles;
+                if (input.kind == InputValue::Kind::Selection) {
+                    handles = input.selection;
+                } else if (input.kind == InputValue::Kind::Entity) {
+                    handles = {input.entity};
+                }
+                std::size_t changed = 0;
+                for (const Handle handle : handles) {
+                    auto* window = context.db().get<ViewportEntity>(handle);
+                    if (window == nullptr || window->erased || window->isPaperSpaceViewport()) {
+                        continue;
+                    }
+                    context.transaction().modifyEntity(*window, [&](ViewportEntity& edited) {
+                        edited.locked = lock_;
+                    });
+                    ++changed;
+                }
+                if (changed == 0) {
+                    return StepResult::failed("No viewports were selected.");
+                }
+                return StepResult::done(std::to_string(changed) + " viewport(s) " +
+                                        (lock_ ? "locked" : "unlocked"));
+            }
 
             case Stage::SecondCorner:
                 if (input.kind != InputValue::Kind::Point) {
@@ -157,13 +209,15 @@ public:
     }
 
 private:
-    enum class Stage { FirstCorner, SecondCorner, Scale };
+    enum class Stage { FirstCorner, SecondCorner, Scale, LockState, LockSelect };
 
     [[nodiscard]] static StepResult askCorner() {
         InputRequest request;
         request.kind = InputRequest::Kind::Point;
-        request.prompt = "Specify corner of viewport or [Fit]";
+        request.prompt = "Specify corner of viewport or [Fit/Lock]";
         request.keywords.push_back(kFitKeyword);
+        request.keywords.push_back(
+            CommandKeyword{"Lock", "L", "Lock or unlock the view of existing viewports"});
         return StepResult::ask(request);
     }
 
@@ -243,6 +297,251 @@ private:
     Stage stage_ = Stage::FirstCorner;
     Vec3 first_;
     Vec3 second_;
+    bool lock_ = true;
+};
+
+// -------------------------------------------------------------- VPLAYER
+
+/// Whether a layer name matches a pattern with `*` and `?`, case-insensitively.
+[[nodiscard]] bool matchesLayerPattern(std::string_view pattern, std::string_view name) {
+    if (pattern.empty()) {
+        return name.empty();
+    }
+    const auto up = [](char c) { return static_cast<char>(std::toupper(static_cast<unsigned char>(c))); };
+    if (pattern.front() == '*') {
+        for (std::size_t i = 0; i <= name.size(); ++i) {
+            if (matchesLayerPattern(pattern.substr(1), name.substr(i))) {
+                return true;
+            }
+        }
+        return false;
+    }
+    if (name.empty()) {
+        return false;
+    }
+    if (pattern.front() == '?' || up(pattern.front()) == up(name.front())) {
+        return matchesLayerPattern(pattern.substr(1), name.substr(1));
+    }
+    return false;
+}
+
+/// VPLAYER — freeze and thaw layers in particular viewports.
+///
+/// The mechanism that lets one model serve several sheets: the demolition
+/// plan freezes the new-work layers in its viewport, the new-work plan
+/// freezes the demolition ones, and model space shows everything. Layer names
+/// take `*` and `?`, and several are given separated by commas.
+class VplayerCommand final : public CommandInstance {
+public:
+    StepResult start(CommandContext& context) override {
+        if (context.db().currentSpace().isModelSpace()) {
+            return StepResult::failed("VPLAYER works on a sheet; switch to a layout first.");
+        }
+        for (const Handle handle : context.initialSelection()) {
+            if (const auto* window = context.db().get<ViewportEntity>(handle);
+                window != nullptr && !window->erased && !window->isPaperSpaceViewport()) {
+                preselected_.push_back(handle);
+            }
+        }
+        return askOption();
+    }
+
+    StepResult supply(const InputValue& input, CommandContext& context) override {
+        if (input.kind == InputValue::Kind::Cancel) {
+            return StepResult::cancelled();
+        }
+        switch (stage_) {
+            case Stage::Option: {
+                if (input.kind != InputValue::Kind::Keyword && input.kind != InputValue::Kind::Text) {
+                    return changes_ == 0 ? StepResult::cancelled()
+                                         : StepResult::done(std::to_string(changes_) +
+                                                            " layer setting(s) changed");
+                }
+                if (matchesKeyword(input.text, 'F')) {
+                    action_ = Action::Freeze;
+                } else if (matchesKeyword(input.text, 'T')) {
+                    action_ = Action::Thaw;
+                } else if (matchesKeyword(input.text, 'R')) {
+                    action_ = Action::Reset;
+                } else if (matchesKeyword(input.text, 'L')) {
+                    list(context);
+                    return askOption();
+                } else {
+                    return askOption();
+                }
+                if (action_ == Action::Reset) {
+                    return askViewports(context);
+                }
+                stage_ = Stage::Layers;
+                InputRequest request;
+                request.kind = InputRequest::Kind::Text;
+                request.prompt = action_ == Action::Freeze ? "Enter layer name(s) to freeze"
+                                                           : "Enter layer name(s) to thaw";
+                return StepResult::ask(request);
+            }
+            case Stage::Layers: {
+                if (input.kind != InputValue::Kind::Text || input.text.empty()) {
+                    return askOption();
+                }
+                layers_ = resolveLayers(input.text, context);
+                if (layers_.empty()) {
+                    context.warn("No layer matches \"" + input.text + "\".");
+                    return askOption();
+                }
+                return askViewports(context);
+            }
+            case Stage::Which: {
+                if (input.kind == InputValue::Kind::Keyword && matchesKeyword(input.text, 'S')) {
+                    stage_ = Stage::Select;
+                    InputRequest request;
+                    request.kind = InputRequest::Kind::Selection;
+                    request.prompt = "Select viewports";
+                    request.minCount = 1;
+                    return StepResult::ask(request);
+                }
+                return apply(allViewports(context), context);
+            }
+            case Stage::Select:
+            default: {
+                std::vector<Handle> handles;
+                if (input.kind == InputValue::Kind::Selection) {
+                    handles = input.selection;
+                } else if (input.kind == InputValue::Kind::Entity) {
+                    handles = {input.entity};
+                }
+                return apply(handles, context);
+            }
+        }
+    }
+
+private:
+    enum class Stage : std::uint8_t { Option, Layers, Which, Select };
+    enum class Action : std::uint8_t { Freeze, Thaw, Reset };
+
+    [[nodiscard]] StepResult askOption() {
+        stage_ = Stage::Option;
+        InputRequest request;
+        request.kind = InputRequest::Kind::Keyword;
+        request.prompt = "Enter an option [Freeze/Thaw/Reset/List]";
+        request.allowEmpty = true;
+        request.keywords = {CommandKeyword{"Freeze", "F", "Hide layers in chosen viewports"},
+                            CommandKeyword{"Thaw", "T", "Show layers again in chosen viewports"},
+                            CommandKeyword{"Reset", "R", "Thaw every layer in chosen viewports"},
+                            CommandKeyword{"List", "L", "Say what each viewport freezes"}};
+        return StepResult::ask(request);
+    }
+
+    [[nodiscard]] StepResult askViewports(CommandContext& context) {
+        if (!preselected_.empty()) {
+            // The viewports were chosen before the command; nothing to ask.
+            return apply(preselected_, context);
+        }
+        stage_ = Stage::Which;
+        InputRequest request;
+        request.kind = InputRequest::Kind::Keyword;
+        request.prompt = "Viewports [All/Select]";
+        request.defaultText = "All";
+        request.allowEmpty = true;
+        request.keywords = {CommandKeyword{"All", "A", "Every viewport on this sheet"},
+                            CommandKeyword{"Select", "S", "Pick the viewports"}};
+        return StepResult::ask(request);
+    }
+
+    [[nodiscard]] static std::vector<Handle> allViewports(CommandContext& context) {
+        std::vector<Handle> handles;
+        for (const Entity* entity : context.db().entitiesIn(context.db().currentSpace())) {
+            if (const auto* window = dynamic_cast<const ViewportEntity*>(entity);
+                window != nullptr && !window->erased && !window->isPaperSpaceViewport()) {
+                handles.push_back(window->handle);
+            }
+        }
+        return handles;
+    }
+
+    [[nodiscard]] static std::vector<Handle> resolveLayers(const std::string& text,
+                                                           CommandContext& context) {
+        std::vector<Handle> found;
+        std::string pattern;
+        const auto take = [&] {
+            const std::size_t begin = pattern.find_first_not_of(" \t");
+            const std::size_t end = pattern.find_last_not_of(" \t");
+            if (begin == std::string::npos) {
+                pattern.clear();
+                return;
+            }
+            const std::string trimmed = pattern.substr(begin, end - begin + 1);
+            pattern.clear();
+            for (const Handle handle : context.db().layers().handles()) {
+                const auto* layer = context.db().get<Layer>(handle);
+                if (layer != nullptr && !layer->erased &&
+                    matchesLayerPattern(trimmed, layer->name) &&
+                    std::find(found.begin(), found.end(), handle) == found.end()) {
+                    found.push_back(handle);
+                }
+            }
+        };
+        for (const char c : text) {
+            if (c == ',') {
+                take();
+            } else {
+                pattern.push_back(c);
+            }
+        }
+        take();
+        return found;
+    }
+
+    StepResult apply(const std::vector<Handle>& handles, CommandContext& context) {
+        std::size_t touched = 0;
+        for (const Handle handle : handles) {
+            auto* window = context.db().get<ViewportEntity>(handle);
+            if (window == nullptr || window->erased || window->isPaperSpaceViewport()) {
+                continue;
+            }
+            context.transaction().modifyEntity(*window, [&](ViewportEntity& edited) {
+                if (action_ == Action::Reset) {
+                    changes_ += edited.frozenLayerHandles.size();
+                    edited.frozenLayerHandles.clear();
+                    return;
+                }
+                for (const Handle layer : layers_) {
+                    const bool frozen = edited.isLayerFrozen(layer);
+                    if (action_ == Action::Freeze && !frozen) {
+                        edited.frozenLayerHandles.push_back(layer);
+                        ++changes_;
+                    } else if (action_ == Action::Thaw && frozen) {
+                        std::erase(edited.frozenLayerHandles, layer);
+                        ++changes_;
+                    }
+                }
+            });
+            ++touched;
+        }
+        if (touched == 0) {
+            context.warn("No viewports were chosen.");
+        }
+        return askOption();
+    }
+
+    static void list(CommandContext& context) {
+        for (const Handle handle : allViewports(context)) {
+            const auto* window = context.db().get<ViewportEntity>(handle);
+            std::string names;
+            for (const Handle layer : window->frozenLayerHandles) {
+                if (const auto* record = context.db().get<Layer>(layer); record != nullptr) {
+                    names += (names.empty() ? "" : ", ") + record->name;
+                }
+            }
+            context.log("Viewport " + std::to_string(window->viewportId) + ": " +
+                        (names.empty() ? std::string{"nothing frozen"} : "frozen " + names));
+        }
+    }
+
+    Stage stage_ = Stage::Option;
+    Action action_ = Action::Freeze;
+    std::vector<Handle> layers_;
+    std::vector<Handle> preselected_;
+    std::size_t changes_ = 0;
 };
 
 // ------------------------------------------------------------ PAGESETUP
@@ -466,6 +765,10 @@ std::vector<CommandDefinition> layoutCommands() {
     commands.push_back(define("cad.layout.pagesetup", "PAGESETUP", {}, "Page Setup",
                               "Paper, orientation and scale for this sheet",
                               [] { return std::make_unique<PageSetupCommand>(); }));
+    commands.push_back(define("cad.layout.vplayer", "VPLAYER", {}, "Viewport Layers",
+                              "Freeze and thaw layers in particular viewports",
+                              [] { return std::make_unique<VplayerCommand>(); }));
+    commands.back().supportsPickfirst = true;
     return commands;
 }
 

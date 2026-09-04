@@ -9,6 +9,7 @@
 #include "cad/db/BlockTableRecord.hpp"
 #include "cad/db/CurveEntities.hpp"
 #include "cad/db/Database.hpp"
+#include "cad/db/Layer.hpp"
 #include "cad/db/Layout.hpp"
 #include "cad/db/Transaction.hpp"
 #include "cad/db/ViewportEntity.hpp"
@@ -247,6 +248,115 @@ TEST_CASE("a sheet's viewport shows the model, not the sheet's own geometry") {
     }
     CHECK(modelSeen);
     CHECK_FALSE(sheetSeenThroughWindow);
+}
+
+namespace {
+
+/// A sheet with two viewports onto a model that has three layers.
+struct TwoViewports {
+    SheetHarness h;
+    Handle first;
+    Handle second;
+    Handle demo;
+    Handle newWork;
+    Handle notes;
+
+    TwoViewports() {
+        demo = h.db->ensureLayer("A-DEMO").handle;
+        newWork = h.db->ensureLayer("A-NEW").handle;
+        notes = h.db->ensureLayer("A-NOTES").handle;
+        h.db->addToModelSpace(
+            std::make_unique<LineEntity>(Vec3{0.0, 0.0, 0.0}, Vec3{1000.0, 500.0, 0.0}));
+        h.showSheet();
+        for (const double x : {20.0, 120.0}) {
+            REQUIRE(h.executor.execute("MVIEW").status == CommandOutcome::Status::Running);
+            h.executor.supply(at(x, 20.0));
+            h.executor.supply(at(x + 80.0, 80.0));
+            REQUIRE(h.executor.supply(InputValue::makeText("1:50")).status ==
+                    CommandOutcome::Status::Completed);
+        }
+        const auto windows = h.onSheet<ViewportEntity>();
+        REQUIRE(windows.size() == 2);
+        first = windows[0]->handle;
+        second = windows[1]->handle;
+    }
+
+    [[nodiscard]] const ViewportEntity& window(Handle handle) {
+        return *h.db->get<ViewportEntity>(handle);
+    }
+};
+
+}  // namespace
+
+TEST_CASE("VPLAYER freezes layers in every viewport, or in chosen ones, with wildcards") {
+    TwoViewports t;
+    REQUIRE(t.h.executor.execute("VPLAYER").status == CommandOutcome::Status::Running);
+    CHECK(t.h.executor.currentRequest()->kind == InputRequest::Kind::Keyword);
+    t.h.executor.supply(InputValue::makeKeyword("F"));
+    t.h.executor.supply(InputValue::makeText("A-DEMO"));
+    t.h.executor.supply(InputValue::makeKeyword("A"));          // all viewports
+    CHECK(t.window(t.first).isLayerFrozen(t.demo));
+    CHECK(t.window(t.second).isLayerFrozen(t.demo));
+
+    // A wildcard and a list, in the second viewport only.
+    t.h.executor.supply(InputValue::makeKeyword("F"));
+    t.h.executor.supply(InputValue::makeText("A-N*, A-DEMO"));
+    t.h.executor.supply(InputValue::makeKeyword("S"));
+    t.h.executor.supply(InputValue::makeSelection({t.second}));
+    CHECK_FALSE(t.window(t.first).isLayerFrozen(t.newWork));
+    CHECK(t.window(t.second).isLayerFrozen(t.newWork));
+    CHECK(t.window(t.second).isLayerFrozen(t.notes));
+    CHECK(t.window(t.second).frozenLayerHandles.size() == 3);   // DEMO not added twice
+
+    // Thaw one, reset the other, then Enter ends it with a count.
+    t.h.executor.supply(InputValue::makeKeyword("T"));
+    t.h.executor.supply(InputValue::makeText("A-DEMO"));
+    t.h.executor.supply(InputValue::makeKeyword("S"));
+    t.h.executor.supply(InputValue::makeSelection({t.first}));
+    CHECK_FALSE(t.window(t.first).isLayerFrozen(t.demo));
+    t.h.executor.supply(InputValue::makeKeyword("R"));
+    t.h.executor.supply(InputValue::makeKeyword("S"));
+    t.h.executor.supply(InputValue::makeSelection({t.second}));
+    CHECK(t.window(t.second).frozenLayerHandles.empty());
+    CHECK(t.h.executor.supply(InputValue::makeEmpty()).status == CommandOutcome::Status::Completed);
+
+    // Model space is not the place for it.
+    t.h.showModel();
+    CHECK(t.h.executor.execute("VPLAYER").status == CommandOutcome::Status::Failed);
+}
+
+TEST_CASE("VPLAYER with viewports selected first asks only for the layers") {
+    TwoViewports t;
+    t.h.selection.setSelection({t.first});
+    REQUIRE(t.h.executor.execute("VPLAYER").status == CommandOutcome::Status::Running);
+    t.h.executor.supply(InputValue::makeKeyword("F"));
+    t.h.executor.supply(InputValue::makeText("A-NOTES"));
+    CHECK(t.window(t.first).isLayerFrozen(t.notes));
+    CHECK_FALSE(t.window(t.second).isLayerFrozen(t.notes));
+    CHECK(t.h.executor.supply(InputValue::makeEmpty()).status == CommandOutcome::Status::Completed);
+
+    // Undo takes the freeze back with it.
+    t.h.tm.undo();
+    CHECK_FALSE(t.window(t.first).isLayerFrozen(t.notes));
+}
+
+TEST_CASE("MVIEW Lock locks and unlocks the view of chosen viewports") {
+    TwoViewports t;
+    REQUIRE(t.h.executor.execute("MVIEW").status == CommandOutcome::Status::Running);
+    t.h.executor.supply(InputValue::makeKeyword("L"));
+    t.h.executor.supply(InputValue::makeKeyword("ON"));
+    CHECK(t.h.executor.supply(InputValue::makeSelection({t.first, t.second})).status ==
+          CommandOutcome::Status::Completed);
+    CHECK(t.window(t.first).locked);
+    CHECK(t.window(t.second).locked);
+
+    REQUIRE(t.h.executor.execute("MVIEW").status == CommandOutcome::Status::Running);
+    t.h.executor.supply(InputValue::makeKeyword("L"));
+    t.h.executor.supply(InputValue::makeKeyword("OFF"));
+    CHECK(t.h.executor.supply(InputValue::makeSelection({t.second})).status ==
+          CommandOutcome::Status::Completed);
+    CHECK(t.window(t.first).locked);
+    CHECK_FALSE(t.window(t.second).locked);
 }
 
 TEST_CASE("PAGESETUP keeps what Enter leaves alone, and refuses an ambiguous paper") {
