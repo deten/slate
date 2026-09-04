@@ -1,0 +1,19 @@
+# A leader carrying a standard note.
+#
+# The shape almost every real macro has: run a command, let the drafter place
+# it, then supply the words. Copy this file into your own commands folder to
+# change the wording -- editing it here works until the next update replaces it.
+
+name: WALLTAG
+alias: WT
+title: Wall Tag
+category: Annotate
+help: Leader with the standard stud-wall note
+param: SIZE = 2x6 | Stud size
+
+LEADER
+\
+\
+\
+;
+TYP. $SIZE STUD WALL

@@ -1,0 +1,29 @@
+# A north arrow, drawn from one picked point.
+#
+# Everything after the pause is relative to nothing -- the coordinates are the
+# drawing's own -- so this one asks for a scale instead and draws at the origin
+# of what the drafter picks by moving afterwards.
+
+name: NORTHARROW
+alias: NA
+title: North Arrow
+category: Annotate
+help: Draw a north arrow and move it where you pick
+
+LINE
+0,0
+0,40
+;
+LINE
+0,40
+-8,24
+;
+LINE
+0,40
+8,24
+;
+MTEXT
+-8,-16
+8,-2
+4
+N

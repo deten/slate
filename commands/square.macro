@@ -1,0 +1,12 @@
+# A square of a given side, from a corner you pick.
+
+name: SQUARE
+alias: SQ
+title: Square
+category: Draw
+help: A square of a given side, from a picked corner
+param: SIDE = 100 | Side length
+
+RECTANGLE
+\
+@$SIDE,$SIDE

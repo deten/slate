@@ -1,0 +1,57 @@
+/*
+ * Windows version resource.
+ *
+ * This is how the executable describes itself to the operating system, and it
+ * is the part of the rebrand that does the *finding*. Windows Search indexes
+ * these strings, the Details tab of the file's properties shows them, and an
+ * installer reads them for its own entry, so what goes in FileDescription is
+ * what somebody typing into a search box can match against.
+ *
+ * Hence the phrasing. The file name is `Slate.exe` because the product is
+ * Slate; the description says what it is and what it opens, in the words a
+ * person uses when they are looking for this and do not yet know it exists.
+ * "DWG compatible" is in there because that is a true statement about what
+ * this reads and writes, and because it is what somebody with a folder of DWG
+ * files is actually searching for. It is a description of a capability, not a
+ * claim to be somebody else's product, and it is written that way deliberately.
+ */
+
+#include <windows.h>
+
+#define SLATE_VERSION       0,1,0,0
+#define SLATE_VERSION_TEXT  "0.1.0"
+
+VS_VERSION_INFO VERSIONINFO
+FILEVERSION     SLATE_VERSION
+PRODUCTVERSION  SLATE_VERSION
+FILEFLAGSMASK   VS_FFI_FILEFLAGSMASK
+#ifdef _DEBUG
+FILEFLAGS       VS_FF_DEBUG
+#else
+FILEFLAGS       0x0L
+#endif
+FILEOS          VOS_NT_WINDOWS32
+FILETYPE        VFT_APP
+FILESUBTYPE     VFT2_UNKNOWN
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        /* US English, Unicode. */
+        BLOCK "040904B0"
+        BEGIN
+            VALUE "CompanyName",      "Slate"
+            VALUE "ProductName",      "Slate CAD"
+            VALUE "FileDescription",  "Slate CAD - 2D CAD drafting, DWG compatible, opens and saves DWG and DXF"
+            VALUE "InternalName",     "Slate"
+            VALUE "OriginalFilename", "Slate.exe"
+            VALUE "ProductVersion",   SLATE_VERSION_TEXT
+            VALUE "FileVersion",      SLATE_VERSION_TEXT
+            VALUE "Comments",         "2D CAD, drafting, drawing, DWG, DXF, DWG compatible, blueprint, floor plan, technical drawing"
+            VALUE "LegalCopyright",   "\251 Slate"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x409, 1200
+    END
+END

@@ -1,0 +1,19 @@
+{
+  "name": "@cad/core",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Geometry kernel, document model, transactions and command system. No UI or platform dependencies.",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc --build",
+    "clean": "tsc --build --clean"
+  }
+}

@@ -1,0 +1,55 @@
+# C++ build output
+build/
+out/
+*.obj
+*.pdb
+*.ilk
+*.exp
+compile_commands.json
+.cache/
+
+# Portable build tooling, downloaded by docs/BUILDING.md steps.
+# Large binaries; not source.
+.tools/
+
+# TypeScript prototype (retained as reference per ADR 0002)
+prototype-ts/node_modules/
+prototype-ts/**/dist/
+*.tsbuildinfo
+
+# Python bytecode from the tools/ scripts
+__pycache__/
+*.pyc
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+.vs/
+.vscode/
+*.user
+
+# Test corpus of real DWG/DXF files: tracked separately, often large and
+# sometimes covered by client confidentiality.
+test-corpus/private/
+
+# Real project drawings dropped in for testing. Client work, not source, and
+# not ours to commit.
+input files/
+*.dwg
+
+# Terminal Paste Image folder
+.cp-images/
+
+# other CAD software lock files, left behind when it exits uncleanly.
+*.dwl
+*.dwl2
+
+# Backups Slate writes beside a drawing it saves over
+*.bak
+examples/exhibit-a/overlay.png
+
+# Project brief, kept local
+input prompt*.md
+
+# Local checks that are not published
+local/

@@ -1,0 +1,28 @@
+{
+  "name": "cad-workspace",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "A professional 2D CAD application with DWG compatibility.",
+  "workspaces": [
+    "packages/core",
+    "packages/io",
+    "packages/render",
+    "packages/app"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "typecheck": "tsc --build --force",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "dev": "npm run dev --workspace @cad/app"
+  },
+  "devDependencies": {
+    "@types/node": "^24.3.0",
+    "typescript": "^5.9.2",
+    "vitest": "^3.2.4"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

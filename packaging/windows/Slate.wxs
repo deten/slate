@@ -1,0 +1,124 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Windows installer definition for Slate CAD (WiX Toolset v4).
+
+  This file is the answer to "how does somebody find this once it is
+  installed", and it is worth being precise about, because the places that
+  Windows actually searches are not the places people expect.
+
+  Windows Start menu search matches, in rough order of weight:
+
+    1. the *shortcut* name in the Start menu — by far the strongest signal;
+    2. the executable's file name, when it is in an indexed location;
+    3. the indexed file properties of the executable, which is where the
+       version resource in src/app/Slate.rc arrives;
+    4. Add/Remove Programs display name, for the Settings app's search.
+
+  So the shortcut is named "Slate CAD" and not "Slate". That single decision is
+  most of the findability: it matches a search for "slate" and a search for
+  "cad", which are the two things somebody would type. The executable stays
+  Slate.exe, because that is the product's name and it is what a user sees in a
+  folder for the rest of the software's life.
+
+  The Comments and ARP fields carry the rest — DWG, DXF, drafting, and the fact
+  that this is DWG compatible. That last one is written as a description of
+  what the software does, which is what it is: it reads and writes the DWG files
+  other CAD software produces. It is not a claim to be other CAD software, and stating a real
+  capability is both more useful to whoever reads it and the only version of
+  this that is anybody's to say.
+
+  Build (requires the WiX Toolset, `dotnet tool install --global wix`):
+
+      wix build packaging\windows\Slate.wxs -d BinDir=build\RelWithDebInfo\bin \
+          -o build\SlateCAD.msi
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package Name="Slate CAD"
+           Manufacturer="Slate"
+           Version="0.1.0"
+           UpgradeCode="6F0A2B1C-9D3E-4C58-8A71-3E2D5B4C9A10"
+           Scope="perMachine">
+
+    <MajorUpgrade DowngradeErrorMessage="A newer version of Slate CAD is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <!--
+      What Add/Remove Programs shows, and what the Settings app searches. The
+      comment field is indexed there, so it is the second place the search terms
+      belong after the shortcut name.
+    -->
+    <Property Id="ARPCOMMENTS"
+              Value="2D CAD drafting. Opens and saves DWG and DXF. DWG compatible." />
+    <Property Id="ARPCONTACT" Value="Slate" />
+    <Property Id="ARPPRODUCTICON" Value="SlateIcon" />
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="Slate" />
+    </StandardDirectory>
+
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Directory Id="SlateMenuFolder" Name="Slate CAD" />
+    </StandardDirectory>
+
+    <Feature Id="Main" Title="Slate CAD" Level="1">
+      <ComponentGroupRef Id="ApplicationFiles" />
+      <ComponentRef Id="StartMenuShortcut" />
+      <ComponentRef Id="FileAssociations" />
+    </Feature>
+
+    <ComponentGroup Id="ApplicationFiles" Directory="INSTALLFOLDER">
+      <Component Id="SlateExe">
+        <File Id="SlateExeFile" Source="$(BinDir)\Slate.exe" KeyPath="yes" />
+      </Component>
+      <!--
+        The Qt runtime and the plugin folder are harvested rather than listed:
+        windeployqt decides what is needed, and a hand-written list goes stale
+        the first time a Qt module is added.
+
+            wix extension add WixToolset.Heat.wixext
+            heat dir build\RelWithDebInfo\bin -cg RuntimeFiles -dr INSTALLFOLDER \
+                 -srd -sfrag -var var.BinDir -out packaging\windows\Runtime.wxs
+      -->
+    </ComponentGroup>
+
+    <Component Id="StartMenuShortcut" Directory="SlateMenuFolder" Guid="*">
+      <!--
+        Named "Slate CAD". This is the string the Start menu searches, and the
+        one that has to match both halves of what somebody might type.
+      -->
+      <Shortcut Id="SlateShortcut"
+                Name="Slate CAD"
+                Description="2D CAD drafting. Opens and saves DWG and DXF. DWG compatible."
+                Target="[INSTALLFOLDER]Slate.exe"
+                WorkingDirectory="INSTALLFOLDER" />
+      <RemoveFolder Id="RemoveSlateMenuFolder" On="uninstall" />
+      <RegistryValue Root="HKCU" Key="Software\Slate\SlateCAD"
+                     Name="installed" Type="integer" Value="1" KeyPath="yes" />
+    </Component>
+
+    <!--
+      File associations. Double-clicking a DWG is how most drawings are opened,
+      and it is also a findability mechanism in its own right: "Open with" lists
+      the friendly name, and Windows offers the application for the file types
+      it claims.
+    -->
+    <Component Id="FileAssociations" Directory="INSTALLFOLDER" Guid="*">
+      <RegistryValue Root="HKCU" Key="Software\Slate\SlateCAD"
+                     Name="associations" Type="integer" Value="1" KeyPath="yes" />
+
+      <ProgId Id="Slate.Drawing.dwg" Description="DWG Drawing" Icon="SlateExeFile">
+        <Extension Id="dwg" ContentType="image/vnd.dwg">
+          <Verb Id="open" Command="Open" Argument="&quot;%1&quot;" />
+        </Extension>
+      </ProgId>
+
+      <ProgId Id="Slate.Drawing.dxf" Description="Drawing Exchange Format" Icon="SlateExeFile">
+        <Extension Id="dxf" ContentType="image/vnd.dxf">
+          <Verb Id="open" Command="Open" Argument="&quot;%1&quot;" />
+        </Extension>
+      </ProgId>
+    </Component>
+
+    <Icon Id="SlateIcon" SourceFile="$(BinDir)\Slate.exe" />
+  </Package>
+</Wix>
