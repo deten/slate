@@ -52,10 +52,42 @@ bool paintPlot(QPainter& painter, Document& document, const QRectF& pageRect,
         }
     }
 
+    // A window narrows the plot to part of the space, in that space's own
+    // coordinates.
+    if (request.window && !request.window->isEmpty() && request.window->width() > 0.0 &&
+        request.window->height() > 0.0) {
+        extents = *request.window;
+    }
+
+    // How many of the page's pixels make a millimetre of paper. A sheet says
+    // its paper size; a model plot is taken as filling the sheet it is set
+    // up for. Lineweights and a stated scale both need this.
+    double pixelsPerMillimetre = 0.0;
+    {
+        double paperWidth = 297.0;
+        double paperHeight = 210.0;
+        if (request.layout != nullptr && request.layout->plot.paperWidth > 0.0 &&
+            request.layout->plot.paperHeight > 0.0) {
+            paperWidth = request.layout->plot.paperWidth;
+            paperHeight = request.layout->plot.paperHeight;
+        }
+        const bool landscapePage = pageRect.width() >= pageRect.height();
+        const double widthOnPage = landscapePage ? std::max(paperWidth, paperHeight)
+                                                 : std::min(paperWidth, paperHeight);
+        pixelsPerMillimetre = pageRect.width() / widthOnPage;
+    }
+
     render::Viewport viewport{extents.center(), 1.0, pageRect.width(), pageRect.height()};
     // No margin: the caller has already handed us the printable area, and
     // insetting again would shrink every plot for no reason.
     viewport = viewport.zoomToFit(extents, 0.0);
+    // A stated scale for a model plot: so many millimetres of paper to the
+    // drawing unit, centred on what is being plotted, whether it fits or not.
+    const bool modelPlot = request.layout == nullptr || request.layout->isModel();
+    if (modelPlot && request.paperPerUnit > 0.0) {
+        viewport = viewport.withScale(pixelsPerMillimetre * request.paperPerUnit)
+                       .withCenter(extents.center());
+    }
 
     render::SpatialIndex& index = document.index();
     render::SceneBuilder builder{document.db(), index};
@@ -99,22 +131,8 @@ bool paintPlot(QPainter& painter, Document& document, const QRectF& pageRect,
     ScenePaintOptions paint;
     paint.monochrome = request.monochrome;
     paint.lineWidthScale = request.lineWidthScale;
-    // Lineweights are millimetres on the paper, so the plot needs to know
-    // how many of its pixels make a millimetre. A sheet says its paper size;
-    // a model plot is taken as filling the sheet it is set up for.
-    {
-        double paperWidth = 297.0;
-        double paperHeight = 210.0;
-        if (request.layout != nullptr && request.layout->plot.paperWidth > 0.0 &&
-            request.layout->plot.paperHeight > 0.0) {
-            paperWidth = request.layout->plot.paperWidth;
-            paperHeight = request.layout->plot.paperHeight;
-        }
-        const bool landscapePage = pageRect.width() >= pageRect.height();
-        const double widthOnPage = landscapePage ? std::max(paperWidth, paperHeight)
-                                                 : std::min(paperWidth, paperHeight);
-        paint.pixelsPerMillimetre = pageRect.width() / widthOnPage;
-    }
+    // Lineweights are millimetres on the paper.
+    paint.pixelsPerMillimetre = pixelsPerMillimetre;
     // Scaled with the device, or a plot silently loses its annotation: three
     // device pixels is a readable smudge on a screen and a speck at 600 dpi.
     paint.minimumTextPixels = 3.0 * request.lineWidthScale;

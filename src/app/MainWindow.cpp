@@ -58,6 +58,7 @@
 #include "Theme.hpp"
 #include "QuickSelectDialog.hpp"
 #include "PurgeDialog.hpp"
+#include "PlotSetupDialog.hpp"
 #include "ReferenceManagerDialog.hpp"
 #include "SettingsDialog.hpp"
 #include "ClipboardCommands.hpp"
@@ -395,6 +396,7 @@ void MainWindow::buildMenus() {
     fileMenu->addAction(tr("&Plot…"), QKeySequence::Print, this, &MainWindow::onPrint);
     fileMenu->addAction(tr("Plot Pre&view…"), this, &MainWindow::onPrintPreview);
     fileMenu->addAction(tr("&Export PDF…"), this, &MainWindow::onExportPdf);
+    fileMenu->addAction(tr("Plot Set&up…"), this, &MainWindow::onPlotSetup);
     fileMenu->addSeparator();
     fileMenu->addAction(tr("E&xit"), QKeySequence::Quit, this, &QWidget::close);
 
@@ -1417,10 +1419,27 @@ PlotRequest MainWindow::currentPlotRequest() const {
     if (document_ != nullptr && document_->inPaperSpace()) {
         request.layout = &document_->activeLayout();
     }
-    // Monochrome by default: a drawing authored against a dark background is
-    // largely white, and white ink is no ink.
-    request.monochrome = config_.boolean("plot", "monochrome", true);
+    // What Plot Setup chose: the area, the scale and the ink. Monochrome by
+    // default: a drawing authored against a dark background is largely
+    // white, and white ink is no ink.
+    const PlotSetup setup = PlotSetup::load(config_);
+    request.monochrome = setup.monochrome;
+    if (setup.area == PlotSetup::Area::Window && !setup.window.isEmpty()) {
+        request.window = setup.window;
+    }
+    request.paperPerUnit = setup.paperPerUnit;
     return request;
+}
+
+void MainWindow::onPlotSetup() {
+    PlotSetupDialog dialog{PlotSetup::load(config_),
+                           document_ != nullptr && document_->inPaperSpace(), this};
+    if (dialog.exec() != QDialog::Accepted) {
+        return;
+    }
+    dialog.setup().save(config_);
+    config_.save(std::filesystem::path{configPath().toStdWString()});
+    log(tr("Plot setup saved."));
 }
 
 void MainWindow::renderPlot(QPrinter& printer) {
@@ -2641,6 +2660,9 @@ bool MainWindow::grabDialogTo(const QString& name, const QString& path) {
         dialog = std::make_unique<PurgeDialog>(*document_, this);
     } else if (name == "references") {
         dialog = std::make_unique<ReferenceManagerDialog>(*document_, this);
+    } else if (name == "plotsetup") {
+        dialog = std::make_unique<PlotSetupDialog>(
+            PlotSetup::load(config_), document_ != nullptr && document_->inPaperSpace(), this);
     } else if (name == "agent") {
         dialog = std::make_unique<AgentSettingsDialog>(ensureAgent().settings(), this);
     } else {

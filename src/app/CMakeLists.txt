@@ -55,6 +55,8 @@ qt_add_executable(cad_app WIN32
     ScenePainter.hpp
     Plotter.cpp
     Plotter.hpp
+    PlotSetupDialog.cpp
+    PlotSetupDialog.hpp
     QuickSelectDialog.cpp
     QuickSelectDialog.hpp
     PurgeDialog.cpp

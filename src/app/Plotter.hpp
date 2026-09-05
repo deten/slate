@@ -1,9 +1,12 @@
 #pragma once
 
 #include <cstddef>
+#include <optional>
 
 #include <QRectF>
 #include <QString>
+
+#include "cad/math/Box3.hpp"
 
 namespace cad {
 class Layout;
@@ -28,6 +31,14 @@ struct PlotRequest {
     /// is also what a monochrome plot style does, which is how most
     /// construction drawings are actually issued.
     bool monochrome = true;
+
+    /// Plot only this part of the space, in its own coordinates: a window
+    /// on the model, or on the sheet. Empty plots the whole thing.
+    std::optional<Box3> window;
+
+    /// Millimetres of paper per drawing unit, for a model plot at a stated
+    /// scale: 1:100 in a millimetre drawing is 0.01. Zero fits the page.
+    double paperPerUnit = 0.0;
 
     /// Scale line widths up for the device. A printer's pixels are far smaller
     /// than a screen's, so a hairline that reads well on a monitor is close to

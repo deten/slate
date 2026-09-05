@@ -46,6 +46,19 @@ sheet, and what they leave showing is what the viewport shows from then on.
 Double-click outside the frame, or type `PSPACE` (PS), to step back out.
 Switching tabs steps out too.
 
+## Plotting
+
+**File > Plot…** prints the current sheet, or model space when no sheet is
+showing. **Plot Preview…** shows the page first. **Export PDF…** writes the
+same to a file.
+
+**File > Plot Setup…** decides what goes on the page. The area is everything,
+or a window given by two corners in the coordinates of what is being plotted.
+The scale is for model plots: paper millimetres per drawing unit, so 1:100 in
+a millimetre drawing puts a metre in a centimetre, or Fit to page. A sheet
+plots at its own size, with its viewports at the scales they were given. Plot
+in black is on by default. Lineweights plot at their width.
+
 ## Not yet
 
 Locking a viewport's scale and per-viewport layer freezing are read and

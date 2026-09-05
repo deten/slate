@@ -293,6 +293,7 @@ private Q_SLOTS:
     void onPrint();
     void onPrintPreview();
     void onExportPdf();
+    void onPlotSetup();
 
 private:
     void buildUi();
