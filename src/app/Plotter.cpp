@@ -99,6 +99,22 @@ bool paintPlot(QPainter& painter, Document& document, const QRectF& pageRect,
     ScenePaintOptions paint;
     paint.monochrome = request.monochrome;
     paint.lineWidthScale = request.lineWidthScale;
+    // Lineweights are millimetres on the paper, so the plot needs to know
+    // how many of its pixels make a millimetre. A sheet says its paper size;
+    // a model plot is taken as filling the sheet it is set up for.
+    {
+        double paperWidth = 297.0;
+        double paperHeight = 210.0;
+        if (request.layout != nullptr && request.layout->plot.paperWidth > 0.0 &&
+            request.layout->plot.paperHeight > 0.0) {
+            paperWidth = request.layout->plot.paperWidth;
+            paperHeight = request.layout->plot.paperHeight;
+        }
+        const bool landscapePage = pageRect.width() >= pageRect.height();
+        const double widthOnPage = landscapePage ? std::max(paperWidth, paperHeight)
+                                                 : std::min(paperWidth, paperHeight);
+        paint.pixelsPerMillimetre = pageRect.width() / widthOnPage;
+    }
     // Scaled with the device, or a plot silently loses its annotation: three
     // device pixels is a readable smudge on a screen and a speck at 600 dpi.
     paint.minimumTextPixels = 3.0 * request.lineWidthScale;

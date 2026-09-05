@@ -768,6 +768,19 @@ void letterA(const Ink& ink, qreal x, qreal y, qreal h) {
              i.newLine(21, 13, 19, 11);
              i.newLine(19, 11, 12, 18);
          }},
+        {"LWDISPLAY",
+         [](const Ink& i) {
+             // Three lines of growing weight.
+             i.line(4, 7, 20, 7);
+             QPen middle = i.painter->pen();
+             middle.setWidthF(2.0);
+             i.painter->setPen(middle);
+             i.painter->drawLine(QPointF{4, 12}, QPointF{20, 12});
+             QPen heavy{i.accent};
+             heavy.setWidthF(3.5);
+             i.painter->setPen(heavy);
+             i.painter->drawLine(QPointF{4, 18}, QPointF{20, 18});
+         }},
         {"VPLAYER",
          [](const Ink& i) {
              // A viewport with one of its layers, a stack of three, crossed out.

@@ -141,6 +141,7 @@ const std::vector<RibbonTab>& ribbonLayout() {
                {"ZOOMCENTER", kSmall}}},
              {"Sheets",
               {{"LAYOUT", kLarge}, {"MVIEW", kLarge}, {"PAGESETUP", kSmall}, {"VPLAYER", kSmall}}},
+             {"Display", {{"LWDISPLAY", kSmall}}},
          }},
 
         // Tools: what is done *to* the drawing rather than drawn in it.

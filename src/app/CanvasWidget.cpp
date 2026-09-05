@@ -2694,6 +2694,11 @@ void CanvasWidget::drawScene(QPainter& painter) {
     ScenePaintOptions options;
     options.minimumTextPixels = textGreekingPixels_;
     options.images = &imageCache_;
+    // At their width when the drawing asks (LWDISPLAY), scaled to this
+    // screen's pixel density so a 0.5 mm line is 0.5 mm on the glass.
+    if (document_ != nullptr && document_->db().settings.displayLineweights) {
+        options.pixelsPerMillimetre = logicalDpiX() / 25.4;
+    }
     paintScene(painter, scene, viewport_, currentTheme(), options);
 }
 

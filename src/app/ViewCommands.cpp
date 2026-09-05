@@ -571,6 +571,40 @@ private:
     std::string what_;
 };
 
+/// LWDISPLAY — show lineweights at their width on screen, or as hairlines.
+///
+/// A setting of the drawing, saved with it. Plots always use the widths;
+/// this is only about the screen.
+class LineweightDisplayCommand final : public CommandInstance {
+public:
+    StepResult start(CommandContext& context) override {
+        InputRequest request;
+        request.kind = InputRequest::Kind::Keyword;
+        request.prompt = "Show lineweights on screen [ON/OFF]";
+        request.defaultText = context.db().settings.displayLineweights ? "OFF" : "ON";
+        request.allowEmpty = true;
+        request.keywords = {CommandKeyword{"ON", "ON", "At their width"},
+                            CommandKeyword{"OFF", "OFF", "As hairlines"}};
+        return StepResult::ask(request);
+    }
+
+    StepResult supply(const InputValue& input, CommandContext& context) override {
+        if (input.kind == InputValue::Kind::Cancel) {
+            return StepResult::cancelled();
+        }
+        bool& shown = context.db().settings.displayLineweights;
+        if ((input.kind == InputValue::Kind::Keyword || input.kind == InputValue::Kind::Text) &&
+            !input.text.empty()) {
+            shown = !(input.text.size() >= 2 &&
+                      std::toupper(static_cast<unsigned char>(input.text[1])) == 'F');
+        } else {
+            shown = !shown;
+        }
+        return StepResult::done(shown ? "Lineweights shown at their width"
+                                      : "Lineweights shown as hairlines");
+    }
+};
+
 /// XATTACH — bring another drawing in as an external reference.
 ///
 /// The file, whether it is attached or overlaid, then where and how big, the
@@ -751,6 +785,21 @@ std::vector<CommandDefinition> viewCommands(CanvasWidget* canvas,
                                             std::function<void(const std::string&)> assistant,
                                             AttachXrefHook attachXref) {
     std::vector<CommandDefinition> commands;
+
+    {
+        CommandDefinition definition;
+        definition.id = "cad.view.lwdisplay";
+        definition.name = "LWDISPLAY";
+        definition.aliases = {"LWT"};
+        definition.title = "Lineweights";
+        definition.description = "Show lineweights at their width on screen, or as hairlines";
+        definition.category = "View";
+        definition.supportsPickfirst = false;
+        // A display setting, not an edit: nothing to undo.
+        definition.transactionMode = CommandTransactionMode::ReadOnly;
+        definition.create = [] { return std::make_unique<LineweightDisplayCommand>(); };
+        commands.push_back(std::move(definition));
+    }
 
     {
         CommandDefinition definition;

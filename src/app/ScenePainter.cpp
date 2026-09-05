@@ -307,9 +307,17 @@ void paintScene(QPainter& painter, const render::Scene& scene,
         switch (item.kind) {
             case render::DrawItem::Kind::Geometry: {
                 QPen pen{color};
-                // Lineweights render as hairlines by default, matching other CAD software:
-                // true-width display makes a drawing unreadable when zoomed out.
-                pen.setWidthF(options.lineWidthScale);
+                // Lineweights render as hairlines unless asked for, matching
+                // other CAD software: true-width display makes a drawing
+                // unreadable when zoomed out. Asked for, a weight is its
+                // width in millimetres on the paper, never thinner than the
+                // hairline; a plot always asks.
+                double width = options.lineWidthScale;
+                if (options.pixelsPerMillimetre > 0.0 && item.style.lineweight > 0) {
+                    width = std::max(width, item.style.lineweight / 100.0 *
+                                                options.pixelsPerMillimetre);
+                }
+                pen.setWidthF(width);
                 pen.setCosmetic(true);
                 pen.setJoinStyle(Qt::RoundJoin);
                 pen.setCapStyle(Qt::FlatCap);

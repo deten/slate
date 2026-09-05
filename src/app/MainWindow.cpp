@@ -758,6 +758,10 @@ void MainWindow::activateDrawing(int index) {
     if (polarButton_ != nullptr) {
         polarButton_->setChecked(canvas_->polarEnabled());
     }
+    if (lineweightButton_ != nullptr) {
+        lineweightButton_->setChecked(document_ != nullptr &&
+                                      document_->db().settings.displayLineweights);
+    }
     if (trackingButton_ != nullptr) {
         trackingButton_->setChecked(canvas_->trackingEnabled());
     }
@@ -1657,6 +1661,18 @@ void MainWindow::buildSnapControl() {
     trackingButton_->setFocusPolicy(Qt::NoFocus);
     connect(trackingButton_, &QToolButton::clicked, this, &MainWindow::toggleTracking);
     statusBar()->addPermanentWidget(trackingButton_);
+
+    // Lineweights are a plotting property; on screen they are a choice, and
+    // one that lives with the drawing, as LWDISPLAY does in the file.
+    lineweightButton_ = new QToolButton{this};
+    lineweightButton_->setText(tr("LWT"));
+    lineweightButton_->setToolTip(tr("Show lineweights at their width on screen"));
+    lineweightButton_->setCheckable(true);
+    lineweightButton_->setAutoRaise(true);
+    lineweightButton_->setCursor(Qt::PointingHandCursor);
+    lineweightButton_->setFocusPolicy(Qt::NoFocus);
+    connect(lineweightButton_, &QToolButton::clicked, this, &MainWindow::toggleLineweights);
+    statusBar()->addPermanentWidget(lineweightButton_);
 
     statusBar()->addPermanentWidget(snapButton_);
 
@@ -3105,6 +3121,19 @@ void MainWindow::onEditBlock(Handle blockRecord) {
     updateWindowTitle();
     log(tr("Editing block %1. Changes appear everywhere it is inserted.")
             .arg(QString::fromStdString(block->name)));
+}
+
+void MainWindow::toggleLineweights() {
+    if (document_ == nullptr) {
+        return;
+    }
+    bool& shown = document_->db().settings.displayLineweights;
+    shown = !shown;
+    if (lineweightButton_ != nullptr) {
+        lineweightButton_->setChecked(shown);
+    }
+    log(shown ? tr("Lineweights shown at their width.") : tr("Lineweights shown as hairlines."));
+    canvas_->update();
 }
 
 void MainWindow::toggleOrtho() {

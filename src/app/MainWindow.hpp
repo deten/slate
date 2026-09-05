@@ -267,6 +267,8 @@ private Q_SLOTS:
     /// Turn the running object snaps on or off, from the button or from F3.
     void toggleObjectSnap();
     void toggleTracking();
+    /// Show lineweights at their width on screen, or as hairlines.
+    void toggleLineweights();
     void onAgentSettings();
 
     void onPurge();
@@ -546,6 +548,7 @@ private:
     /// POLAR, the other constraint, on F10.
     QToolButton* polarButton_ = nullptr;
     QToolButton* trackingButton_ = nullptr;
+    QToolButton* lineweightButton_ = nullptr;
     std::unique_ptr<AgentService> agent_;
     /// Menus made for a command category, torn down when they are rebuilt.
     std::vector<QMenu*> commandMenus_;

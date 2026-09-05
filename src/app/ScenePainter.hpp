@@ -29,6 +29,12 @@ struct ScenePaintOptions {
     /// to invisible at 600 dpi.
     double lineWidthScale = 1.0;
 
+    /// Device pixels per millimetre of paper, when lineweights are to show
+    /// at their true width. Zero draws every line as a hairline, which is
+    /// how a screen normally shows a drawing and how it stays readable when
+    /// zoomed out.
+    double pixelsPerMillimetre = 0.0;
+
     /// Smallest text worth drawing, in device pixels. Below this, text is an
     /// unreadable smudge on screen — but on paper the threshold has to scale
     /// with the device or a plot silently loses its annotation.
