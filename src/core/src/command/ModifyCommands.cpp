@@ -1696,6 +1696,143 @@ private:
     std::vector<Handle> selection_;
 };
 
+/// ALIGN — move, turn and optionally scale objects so that picked points land
+/// on picked points.
+///
+/// One pair of points is a move. Two pairs add the turn that takes the first
+/// source direction onto the destination direction, and, if asked, the scale
+/// that makes the distances match: how a detail traced at one size is dropped
+/// onto a plan at another.
+class AlignCommand final : public CommandInstance {
+public:
+    StepResult start(CommandContext& context) override {
+        if (!context.initialSelection().empty()) {
+            selection_ = context.initialSelection();
+            return askPoint("Specify first source point");
+        }
+        InputRequest request;
+        request.kind = InputRequest::Kind::Selection;
+        request.prompt = "Select objects to align";
+        request.minCount = 1;
+        return StepResult::ask(request);
+    }
+
+    StepResult supply(const InputValue& input, CommandContext& context) override {
+        if (input.kind == InputValue::Kind::Cancel) {
+            return StepResult::cancelled();
+        }
+        switch (stage_) {
+            case Stage::Select:
+                if (input.kind == InputValue::Kind::Selection) {
+                    selection_ = input.selection;
+                } else if (input.kind == InputValue::Kind::Entity) {
+                    selection_ = {input.entity};
+                }
+                if (selection_.empty()) {
+                    return StepResult::cancelled("Nothing selected.");
+                }
+                return askPoint("Specify first source point");
+            case Stage::Source1:
+                if (input.kind != InputValue::Kind::Point) {
+                    return StepResult::cancelled();
+                }
+                source1_ = input.point;
+                return askPoint("Specify first destination point");
+            case Stage::Destination1:
+                if (input.kind != InputValue::Kind::Point) {
+                    return StepResult::cancelled();
+                }
+                destination1_ = input.point;
+                return askPoint("Specify second source point or press Enter", true);
+            case Stage::Source2:
+                if (input.kind != InputValue::Kind::Point) {
+                    return apply(context);
+                }
+                source2_ = input.point;
+                hasSecond_ = true;
+                return askPoint("Specify second destination point");
+            case Stage::Destination2: {
+                if (input.kind != InputValue::Kind::Point) {
+                    return StepResult::cancelled();
+                }
+                destination2_ = input.point;
+                stage_ = Stage::Scale;
+                InputRequest request;
+                request.kind = InputRequest::Kind::Keyword;
+                request.prompt = "Scale objects based on alignment points? [Yes/No]";
+                request.defaultText = "No";
+                request.allowEmpty = true;
+                request.keywords = {CommandKeyword{"Yes", "Y", "Make the distances match"},
+                                    CommandKeyword{"No", "N", "Keep the size"}};
+                return StepResult::ask(request);
+            }
+            case Stage::Scale:
+            default:
+                scale_ = (input.kind == InputValue::Kind::Keyword ||
+                          input.kind == InputValue::Kind::Text) &&
+                         matchesKeyword(input.text, 'Y');
+                return apply(context);
+        }
+    }
+
+private:
+    enum class Stage : std::uint8_t { Select, Source1, Destination1, Source2, Destination2, Scale };
+
+    [[nodiscard]] StepResult askPoint(const char* prompt, bool allowEmpty = false) {
+        stage_ = static_cast<Stage>(static_cast<int>(stage_) + 1);
+        InputRequest request;
+        request.kind = InputRequest::Kind::Point;
+        request.prompt = prompt;
+        request.allowEmpty = allowEmpty;
+        return StepResult::ask(request);
+    }
+
+    [[nodiscard]] StepResult apply(CommandContext& context) {
+        Mat4 transform = Mat4::translation(destination1_ - source1_);
+        if (hasSecond_) {
+            const Vec3 from = source2_ - source1_;
+            const Vec3 to = destination2_ - destination1_;
+            if (from.lengthSquared() < 1e-18 || to.lengthSquared() < 1e-18) {
+                return StepResult::failed("The two points of a pair must differ.");
+            }
+            const double angle = to.angle2() - from.angle2();
+            transform = Mat4::rotationZ(angle, destination1_) * transform;
+            if (scale_) {
+                transform = Mat4::scaling(to.length() / from.length(), destination1_) * transform;
+            }
+        }
+        int count = 0;
+        for (const Handle handle : selection_) {
+            Entity* entity = context.db().getEntity(handle);
+            if (entity == nullptr || entity->erased) {
+                continue;
+            }
+            const Layer* layer = context.db().get<Layer>(entity->layerHandle);
+            if (layer != nullptr && layer->isLocked) {
+                context.warn("Skipped an object on locked layer \"" + layer->name + "\".");
+                continue;
+            }
+            if (!entity->canTransform()) {
+                context.warn("Skipped a " + entity->objectType() + ", which cannot be moved.");
+                continue;
+            }
+            context.transaction().modifyEntity(
+                *entity, [&](Entity& e) { transformEntity(e, transform, context); });
+            ++count;
+        }
+        return StepResult::done(std::to_string(count) + " object(s) aligned");
+    }
+
+    Stage stage_ = Stage::Select;
+    std::vector<Handle> selection_;
+    Vec3 source1_;
+    Vec3 destination1_;
+    Vec3 source2_;
+    Vec3 destination2_;
+    bool hasSecond_ = false;
+    bool scale_ = false;
+};
+
 [[nodiscard]] CommandDefinition makeDefinition(std::string id, std::string name,
                                                std::vector<std::string> aliases,
                                                std::string title, std::string description,
@@ -1779,6 +1916,10 @@ std::vector<CommandDefinition> modifyCommands() {
     commands.push_back(makeDefinition("cad.modify.move", "MOVE", {"M"}, "Move",
                                       "Move objects by a displacement",
                                       [] { return std::make_unique<MoveCommand>(); }));
+    commands.push_back(makeDefinition("cad.modify.align", "ALIGN", {"AL"}, "Align",
+                                      "Move, turn and scale objects so picked points land on "
+                                      "picked points",
+                                      [] { return std::make_unique<AlignCommand>(); }));
     commands.push_back(makeDefinition("cad.modify.draworder", "DRAWORDER", {"DR"}, "Draw Order",
                                       "Bring objects to the front, send them back, or put "
                                       "them just above or under another",

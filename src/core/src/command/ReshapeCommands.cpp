@@ -17,6 +17,7 @@
 #include "cad/db/InsertEntity.hpp"
 #include "cad/db/Layer.hpp"
 #include "cad/geom/Operations.hpp"
+#include "cad/math/Angle.hpp"
 
 namespace cad {
 namespace {
@@ -758,6 +759,150 @@ const CommandKeyword kPeditExitKeyword{"eXit", "X", "Done"};
 
 /// PEDIT: edit one polyline. A line or arc picked instead is turned into one
 /// first, as other CAD software does with PEDITACCEPT on.
+/// LENGTHEN — make a line or an arc longer or shorter at the end picked.
+///
+/// By an amount, to a percentage of what it is, or to a total length. The end
+/// nearer the pick is the one that moves; the other stays where it is, which
+/// is what makes this different from STRETCH.
+class LengthenCommand final : public CommandInstance {
+public:
+    StepResult start(CommandContext& /*context*/) override {
+        InputRequest request;
+        request.kind = InputRequest::Kind::Keyword;
+        request.prompt = "Enter an option [DElta/Percent/Total]";
+        request.defaultText = "DElta";
+        request.allowEmpty = true;
+        request.keywords = {CommandKeyword{"DElta", "DE", "Add or take off an amount"},
+                            CommandKeyword{"Percent", "P", "A percentage of the current length"},
+                            CommandKeyword{"Total", "T", "A length to end up with"}};
+        return StepResult::ask(request);
+    }
+
+    StepResult supply(const InputValue& input, CommandContext& context) override {
+        if (input.kind == InputValue::Kind::Cancel) {
+            return StepResult::cancelled();
+        }
+        switch (stage_) {
+            case Stage::Mode: {
+                if (input.kind == InputValue::Kind::Keyword || input.kind == InputValue::Kind::Text) {
+                    if (matchesKeyword(input.text, 'P')) {
+                        mode_ = Mode::Percent;
+                    } else if (matchesKeyword(input.text, 'T')) {
+                        mode_ = Mode::Total;
+                    }
+                }
+                stage_ = Stage::Value;
+                InputRequest request;
+                request.kind = InputRequest::Kind::Number;
+                request.prompt = mode_ == Mode::Delta     ? "Enter delta length"
+                                 : mode_ == Mode::Percent ? "Enter percentage length"
+                                                          : "Specify total length";
+                request.defaultNumber = mode_ == Mode::Percent ? 100.0 : 0.0;
+                return StepResult::ask(request);
+            }
+            case Stage::Value:
+                if (input.kind != InputValue::Kind::Number) {
+                    return StepResult::cancelled();
+                }
+                value_ = input.number;
+                return askObject();
+            case Stage::Object:
+            default: {
+                if (input.kind != InputValue::Kind::Entity) {
+                    return changed_ == 0 ? StepResult::cancelled()
+                                         : StepResult::done(std::to_string(changed_) +
+                                                            " object(s) lengthened");
+                }
+                Entity* entity = context.db().getEntity(input.entity);
+                if (entity == nullptr || entity->erased) {
+                    return askObject();
+                }
+                if (isLocked(*entity, context)) {
+                    context.warn("That object is on a locked layer.");
+                    return askObject();
+                }
+                std::string problem;
+                if (!lengthen(*entity, input.point, context, problem)) {
+                    context.warn(problem);
+                }
+                return askObject();
+            }
+        }
+    }
+
+private:
+    enum class Stage : std::uint8_t { Mode, Value, Object };
+    enum class Mode : std::uint8_t { Delta, Percent, Total };
+
+    [[nodiscard]] StepResult askObject() {
+        stage_ = Stage::Object;
+        InputRequest request;
+        request.kind = InputRequest::Kind::Entity;
+        request.prompt = "Select an object to change or press Enter";
+        request.allowEmpty = true;
+        return StepResult::ask(request);
+    }
+
+    [[nodiscard]] bool lengthen(Entity& entity, const Vec3& pick, CommandContext& context,
+                                std::string& problem) {
+        const std::vector<CurvePtr> curves = entity.toCurves();
+        if (curves.size() != 1 || curves.front() == nullptr) {
+            problem = "LENGTHEN works on a line or an arc.";
+            return false;
+        }
+        const Curve& curve = *curves.front();
+        const double length = curve.length();
+        double delta = value_;
+        if (mode_ == Mode::Percent) {
+            delta = length * (value_ / 100.0 - 1.0);
+        } else if (mode_ == Mode::Total) {
+            delta = value_ - length;
+        }
+        // The end nearer the pick is the one that moves.
+        const bool atEnd = pick.distanceTo(curve.endPoint()) <= pick.distanceTo(curve.startPoint());
+
+        std::vector<CurvePtr> pieces;
+        if (const auto* line = dynamic_cast<const LineSegment*>(&curve)) {
+            if (length + delta <= 1e-9) {
+                problem = "That would leave the line with no length.";
+                return false;
+            }
+            const Vec3 direction = (line->end - line->start).normalized();
+            pieces.push_back(std::make_unique<LineSegment>(
+                atEnd ? line->start : line->start - direction * delta,
+                atEnd ? line->end + direction * delta : line->end));
+        } else if (const auto* arc = dynamic_cast<const Arc*>(&curve)) {
+            if (arc->isFullCircle() || arc->radius <= 0.0) {
+                problem = "A circle has no end to lengthen.";
+                return false;
+            }
+            const double turn = delta / arc->radius;
+            const double sweep = arc->sweep() + turn;
+            if (sweep <= 1e-9 || sweep >= kTau) {
+                problem = "That would leave the arc with no length, or close it.";
+                return false;
+            }
+            const double start = atEnd ? arc->startAngle : arc->startAngle - turn;
+            pieces.push_back(std::make_unique<Arc>(arc->center, arc->radius, start, start + sweep,
+                                                   arc->normal));
+        } else {
+            problem = "LENGTHEN works on a line or an arc.";
+            return false;
+        }
+        if (replaceWithCurves(entity, pieces, context) == 0) {
+            problem = "The object could not be changed.";
+            return false;
+        }
+        ++changed_;
+        return true;
+    }
+
+    Stage stage_ = Stage::Mode;
+    Mode mode_ = Mode::Delta;
+    double value_ = 0.0;
+    std::size_t changed_ = 0;
+};
+
 class PeditCommand final : public CommandInstance {
 public:
     StepResult start(CommandContext& context) override {
@@ -1037,6 +1182,10 @@ std::vector<CommandDefinition> reshapeCommands() {
     commands.push_back(makeDefinition("cad.modify.join", "JOIN", {"J"}, "Join",
                                       "Merge objects that meet end to end into one polyline",
                                       [] { return std::make_unique<JoinCommand>(); }, true));
+    commands.push_back(makeDefinition("cad.modify.lengthen", "LENGTHEN", {"LEN"}, "Lengthen",
+                                      "Make a line or an arc longer or shorter at one end",
+                                      [] { return std::make_unique<LengthenCommand>(); },
+                                      false));
     commands.push_back(makeDefinition("cad.modify.pedit", "PEDIT", {"PE"}, "Edit Polyline",
                                       "Close, open, join, widen, reverse or straighten a polyline",
                                       [] { return std::make_unique<PeditCommand>(); }, true));

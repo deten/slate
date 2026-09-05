@@ -683,6 +683,26 @@ void letterA(const Ink& ink, qreal x, qreal y, qreal h) {
              i.line(22, 8, 22, 16);
              i.newLine(12, 12, 22, 12);
          }},
+        {"ALIGN",
+         [](const Ink& i) {
+             // A tilted shape and, in the accent, where it lands: squared up.
+             i.line(3, 15, 9, 7);
+             i.line(9, 7, 14, 10);
+             i.line(14, 10, 8, 18);
+             i.line(8, 18, 3, 15);
+             i.painter->setPen(i.accent);
+             i.painter->setBrush(Qt::NoBrush);
+             i.painter->drawRect(QRectF{13.5, 4.5, 7, 9});
+         }},
+        {"LENGTHEN",
+         [](const Ink& i) {
+             // A line, and the accent showing how much further it goes.
+             i.line(3, 12, 13, 12);
+             i.line(3, 9, 3, 15);
+             i.newLine(13, 12, 21, 12);
+             i.line(18, 9, 21, 12);
+             i.line(18, 15, 21, 12);
+         }},
         {"DRAWORDER",
          [](const Ink& i) {
              // Two overlapping sheets, the front one in the accent.

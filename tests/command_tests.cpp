@@ -1021,6 +1021,81 @@ TEST_SUITE("Text commands") {
         CHECK_FALSE(texts[0]->styleHandle.isNull());
     }
 
+    TEST_CASE("LENGTHEN changes a line by an amount, a percentage, or to a total") {
+        Harness h;
+        const Handle line = h.db->addToModelSpace(
+            std::make_unique<LineEntity>(Vec3{0, 0, 0}, Vec3{100, 0, 0})).handle;
+
+        // Delta, picked nearer the start: the start moves, the end stays.
+        h.executor.execute("LENGTHEN");
+        h.executor.supply(InputValue::makeKeyword("DE"));
+        h.executor.supply(InputValue::makeNumber(10.0));
+        h.executor.supply(InputValue::makeEntity(line));
+        CHECK(h.executor.supply(InputValue::makeEmpty()).status == CommandOutcome::Status::Completed);
+        auto lines = h.ofType<LineEntity>();
+        REQUIRE(lines.size() == 1);
+        CHECK_POINT(lines[0]->start, Vec3(-10, 0));
+        CHECK_POINT(lines[0]->end, Vec3(100, 0));
+
+        // Total: the length becomes what is asked.
+        h.executor.execute("LENGTHEN");
+        h.executor.supply(InputValue::makeKeyword("T"));
+        h.executor.supply(InputValue::makeNumber(50.0));
+        h.executor.supply(InputValue::makeEntity(lines[0]->handle));
+        h.executor.supply(InputValue::makeEmpty());
+        lines = h.ofType<LineEntity>();
+        REQUIRE(lines.size() == 1);
+        CHECK(lines[0]->start.distanceTo(lines[0]->end) == doctest::Approx(50.0));
+        CHECK_POINT(lines[0]->end, Vec3(100, 0));
+
+        // Percent: half as long, and an arc grows by arc length.
+        h.executor.execute("LENGTHEN");
+        h.executor.supply(InputValue::makeKeyword("P"));
+        h.executor.supply(InputValue::makeNumber(50.0));
+        h.executor.supply(InputValue::makeEntity(lines[0]->handle));
+        h.executor.supply(InputValue::makeEmpty());
+        lines = h.ofType<LineEntity>();
+        CHECK(lines[0]->start.distanceTo(lines[0]->end) == doctest::Approx(25.0));
+
+        const Handle arc = h.db->addToModelSpace(
+            std::make_unique<ArcEntity>(Vec3{0, 0, 0}, 10.0, 0.0, kPi / 2.0)).handle;
+        h.executor.execute("LENGTHEN");
+        h.executor.supply(InputValue::makeKeyword("DE"));
+        h.executor.supply(InputValue::makeNumber(5.0));
+        h.executor.supply(InputValue::makeEntity(arc));
+        h.executor.supply(InputValue::makeEmpty());
+        const auto arcs = h.ofType<ArcEntity>();
+        REQUIRE(arcs.size() == 1);
+        CHECK(arcs[0]->geometry().length() == doctest::Approx(10.0 * kPi / 2.0 + 5.0));
+    }
+
+    TEST_CASE("ALIGN moves, turns and scales objects onto their destination points") {
+        Harness h;
+        const Handle line = h.db->addToModelSpace(
+            std::make_unique<LineEntity>(Vec3{0, 0, 0}, Vec3{10, 0, 0})).handle;
+        h.selection.setSelection({line});
+        h.executor.execute("ALIGN");
+        h.executor.supply(point(0, 0));       // first source
+        h.executor.supply(point(100, 100));   // first destination
+        h.executor.supply(point(10, 0));      // second source
+        h.executor.supply(point(100, 120));   // second destination: turned, twice as long
+        CHECK(h.executor.supply(InputValue::makeKeyword("Y")).status ==
+              CommandOutcome::Status::Completed);
+        const auto lines = h.ofType<LineEntity>();
+        REQUIRE(lines.size() == 1);
+        CHECK_POINT(lines[0]->start, Vec3(100, 100));
+        CHECK_POINT(lines[0]->end, Vec3(100, 120));
+
+        // One pair is a plain move.
+        h.selection.setSelection({line});
+        h.executor.execute("ALIGN");
+        h.executor.supply(point(100, 100));
+        h.executor.supply(point(0, 0));
+        CHECK(h.executor.supply(InputValue::makeEmpty()).status ==
+              CommandOutcome::Status::Completed);
+        CHECK_POINT(h.ofType<LineEntity>()[0]->end, Vec3(0, 20));
+    }
+
     TEST_CASE("DRAWORDER moves objects to the front, the back, and beside another") {
         Harness h;
         const Handle a = h.db->addToModelSpace(std::make_unique<LineEntity>(Vec3{0, 0, 0}, Vec3{1, 0, 0})).handle;
