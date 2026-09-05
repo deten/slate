@@ -110,6 +110,10 @@ target_compile_definitions(cad_app PRIVATE QT_NO_KEYWORDS)
 # fixing generated code is not possible. The rule still applies to our sources.
 if(MSVC)
     target_compile_options(cad_app PRIVATE /wd4464 /wd5219)
+    # The executable records where its symbol file lives. Only the file name,
+    # not the folder it was built in: a build machine's paths are nobody
+    # else's business and do not belong in a shipped binary.
+    target_link_options(cad_app PRIVATE "/PDBALTPATH:%_PDB%")
 endif()
 
 # The shipped macros, beside the executable where the application looks for
