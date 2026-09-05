@@ -42,6 +42,8 @@ private:
     void reload();
     void onSelectionChanged();
     void onLocate();
+    void onReload();
+    void onDetach();
 
     /// The definition currently selected, or a null handle.
     [[nodiscard]] Handle selectedDefinition() const;
@@ -50,6 +52,8 @@ private:
     QTreeWidget* tree_ = nullptr;
     QLabel* summary_ = nullptr;
     QPushButton* locate_ = nullptr;
+    QPushButton* reload_ = nullptr;
+    QPushButton* detach_ = nullptr;
     std::vector<io::AttachedFileNode> nodes_;
 };
 

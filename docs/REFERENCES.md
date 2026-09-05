@@ -11,7 +11,7 @@ and where to put it.
 | `XATTACH` (XA) | Attach another DWG or DXF as an external reference. Asks for the file, whether it is an attachment or an overlay, then the insertion point, scale and rotation. The reference is placed like a block and shows the other drawing's contents. An overlay is seen here only and not through further references. |
 | `PDFATTACH` (PDFA) | Place a page of a PDF under the drawing to trace over. Asks for the file, the page when there is more than one, then the insertion point, scale and rotation. The page is placed at its printed size, one PDF inch to the drawing's inch, times the scale. |
 | `IMAGEATTACH` (IAT) | Place a picture file. Asks for the file, then the insertion point, scale and rotation. One pixel is one drawing unit at scale 1. |
-| `REFERENCES` (XREF, IMAGE) | The reference manager: every file the drawing depends on, whether it was found, and Locate to repair a path. |
+| `REFERENCES` (XREF, IMAGE) | The reference manager: every picture and PDF the drawing depends on, whether it was found, Locate to repair a path, Reload to read the files again, and Detach to remove one with every place it is shown. Detach undoes as one step. |
 | `DRAWORDER` (DR) | Which objects draw over which: to the front, to the back, or just above or under another object. A PDF page or a picture sent to the back stops hiding the lines drawn over it. |
 
 ## What is drawn
@@ -31,5 +31,6 @@ here opens elsewhere with its references intact.
 
 ## Not yet
 
-Detaching, reloading and unloading references from the manager. Clipping a
-reference or a picture drawn here. Attaching DWF and DGN underlays.
+External drawings in the manager, with detach, reload and unload for them.
+Clipping a reference or a picture drawn here. Attaching DWF and DGN
+underlays.

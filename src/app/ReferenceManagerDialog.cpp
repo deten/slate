@@ -12,7 +12,11 @@
 
 #include "Document.hpp"
 #include "Theme.hpp"
+#include "cad/db/BlockTableRecord.hpp"
+#include "cad/db/Database.hpp"
+#include "cad/db/RasterImageEntity.hpp"
 #include "cad/db/Transaction.hpp"
+#include "cad/db/UnderlayEntity.hpp"
 
 namespace cad::app {
 namespace {
@@ -47,10 +51,17 @@ ReferenceManagerDialog::ReferenceManagerDialog(Document& document, QWidget* pare
     locate_ = new QPushButton{tr("Locate…"), this};
     locate_->setEnabled(false);
     locate_->setToolTip(tr("Point this reference at a file on disk"));
+    reload_ = new QPushButton{tr("Reload"), this};
+    reload_->setToolTip(tr("Read every attached file again, for one that changed on disk"));
+    detach_ = new QPushButton{tr("Detach"), this};
+    detach_->setEnabled(false);
+    detach_->setToolTip(tr("Remove this file from the drawing, with every place it is shown"));
 
     auto* buttons = new QDialogButtonBox{QDialogButtonBox::Close, this};
     auto* row = new QHBoxLayout;
     row->addWidget(locate_);
+    row->addWidget(reload_);
+    row->addWidget(detach_);
     row->addStretch(1);
     row->addWidget(buttons);
 
@@ -66,8 +77,62 @@ ReferenceManagerDialog::ReferenceManagerDialog(Document& document, QWidget* pare
     connect(tree_, &QTreeWidget::itemDoubleClicked, this,
             [this](QTreeWidgetItem*, int) { onLocate(); });
     connect(locate_, &QPushButton::clicked, this, &ReferenceManagerDialog::onLocate);
+    connect(reload_, &QPushButton::clicked, this, &ReferenceManagerDialog::onReload);
+    connect(detach_, &QPushButton::clicked, this, &ReferenceManagerDialog::onDetach);
 
     reload();
+}
+
+void ReferenceManagerDialog::onReload() {
+    // Resolved again from the paths as stored, so a file put back where the
+    // drawing expects it is found, and one changed on disk is decoded again.
+    io::XrefLoadOptions options;
+    if (!document_.filePath.empty()) {
+        options.searchPaths.push_back(
+            std::filesystem::path{document_.filePath}.parent_path());
+    }
+    static_cast<void>(io::resolveAttachedFiles(document_.db(), document_.filePath, options));
+    reload();
+    Q_EMIT referencesChanged();
+}
+
+void ReferenceManagerDialog::onDetach() {
+    const Handle definition = selectedDefinition();
+    if (definition.isNull()) {
+        return;
+    }
+    // The definition and every placement of it, in one undo step: a picture
+    // detached is gone from every sheet it was on, and Ctrl+Z brings the
+    // whole of that back.
+    std::size_t removed = 0;
+    document_.transactions().run("Detach reference", [&](Transaction& transaction) {
+        Database& db = document_.db();
+        for (const Handle blockHandle : db.blocks().handles()) {
+            auto* block = db.get<BlockTableRecord>(blockHandle);
+            if (block == nullptr || block->erased) {
+                continue;
+            }
+            for (Entity* entity : db.entitiesIn(*block)) {
+                if (entity == nullptr || entity->erased) {
+                    continue;
+                }
+                const auto* image = dynamic_cast<const RasterImageEntity*>(entity);
+                const auto* underlay = dynamic_cast<const UnderlayEntity*>(entity);
+                if ((image != nullptr && image->definitionHandle == definition) ||
+                    (underlay != nullptr && underlay->definitionHandle == definition)) {
+                    static_cast<void>(transaction.erase(*entity));
+                    ++removed;
+                }
+            }
+        }
+        if (DbObject* object = db.getObject(definition)) {
+            static_cast<void>(transaction.erase(*object));
+        }
+    });
+    document_.reindex();
+    reload();
+    Q_EMIT referencesChanged();
+    summary_->setText(tr("Detached, with %n placement(s) removed.", "", static_cast<int>(removed)));
 }
 
 void ReferenceManagerDialog::reload() {
@@ -154,6 +219,7 @@ Handle ReferenceManagerDialog::selectedDefinition() const {
 
 void ReferenceManagerDialog::onSelectionChanged() {
     locate_->setEnabled(!selectedDefinition().isNull());
+    detach_->setEnabled(!selectedDefinition().isNull());
 }
 
 void ReferenceManagerDialog::onLocate() {
