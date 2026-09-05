@@ -1035,6 +1035,41 @@ TEST_SUITE("Annotation commands") {
         CHECK(dimension->measure() == doctest::Approx(100.0));
     }
 
+    TEST_CASE("a dimension too short for its text puts the text past the second extension line") {
+        CommandHarness harness;
+        harness.executor.execute("DIMLINEAR");
+        harness.executor.supply(point(0.0, 0.0));
+        harness.executor.supply(point(3.0, 0.0));
+        harness.executor.supply(point(1.5, 20.0));
+        const auto* dimension = harness.only<DimensionEntity>();
+        REQUIRE(dimension != nullptr);
+        const DimStyle style = harness.db->effectiveDimStyle(*dimension);
+        const DimensionGeometry geometry = dimension->generate(style);
+
+        // The words are wider than three units, so they sit to the right,
+        // clear of the second extension line, at the line's height.
+        const double width = measureText(geometry.text, style.scaled(style.textHeight), 1.0);
+        REQUIRE(width > 3.0);
+        CHECK(geometry.textPosition.x > 3.0 + width / 2.0);
+        // And the dimension line runs out under them.
+        double furthest = 0.0;
+        for (const LineSegment& line : geometry.lines) {
+            furthest = std::max({furthest, line.start.x, line.end.x});
+        }
+        CHECK(furthest >= geometry.textPosition.x + width / 2.0 - 1e-9);
+
+        // A dimension with room keeps its text in the middle.
+        CommandHarness roomy;
+        roomy.executor.execute("DIMLINEAR");
+        roomy.executor.supply(point(0.0, 0.0));
+        roomy.executor.supply(point(100.0, 0.0));
+        roomy.executor.supply(point(50.0, 20.0));
+        const auto* wide = roomy.only<DimensionEntity>();
+        REQUIRE(wide != nullptr);
+        CHECK(wide->generate(roomy.db->effectiveDimStyle(*wide)).textPosition.x ==
+              doctest::Approx(50.0));
+    }
+
     TEST_CASE("DIMTEDIT moves the text to the ends, home, a point, or an angle") {
         CommandHarness harness;
         harness.executor.execute("DIMLINEAR");

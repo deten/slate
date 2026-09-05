@@ -241,8 +241,19 @@ DimensionGeometry DimensionEntity::generateLinear(const DimStyle& style) const {
 
     const double lineExtend =
         arrowsInside ? style.scaled(style.dimensionLineExtend) : 2.0 * arrowLength;
-    const Vec3 lineStart = dim1 - toward2 * lineExtend;
-    const Vec3 lineEnd = dim2 + toward2 * lineExtend;
+    Vec3 lineStart = dim1 - toward2 * lineExtend;
+    Vec3 lineEnd = dim2 + toward2 * lineExtend;
+
+    // Text sitting beyond either end, because it did not fit or because it
+    // was dragged there, gets the dimension line carried out under it.
+    const Vec3 textAt = textPositionIsUserDefined ? textMidPoint : defaultTextPosition(style);
+    const double halfText = measureText(out.text, style.scaled(style.textHeight), 1.0) / 2.0;
+    const double textAlong = (textAt - dim1).dot(toward2);
+    if (textAlong > span) {
+        lineEnd = dim1 + toward2 * std::max(span + lineExtend, textAlong + halfText);
+    } else if (textAlong < 0.0) {
+        lineStart = dim1 + toward2 * std::min(-lineExtend, textAlong - halfText);
+    }
     if (!style.suppressDimensionLine1 || !style.suppressDimensionLine2) {
         out.lines.push_back(LineSegment{lineStart, lineEnd});
     }
@@ -415,7 +426,18 @@ Vec3 DimensionEntity::defaultTextPosition(const DimStyle& style) const {
             const Vec3 origin = definitionPoint;
             const Vec3 dim1 = origin + along * (point13 - origin).dot(along);
             const Vec3 dim2 = origin + along * (point14 - origin).dot(along);
-            const Vec3 middle = dim1.midpoint(dim2);
+            Vec3 middle = dim1.midpoint(dim2);
+
+            // Text that will not fit between the arrows goes outside, past
+            // the second extension line, the way a short dimension is read
+            // on any drawing. Squeezing it in makes a blot nobody can read.
+            const double width = measureText(measurementText(style), height, 1.0);
+            const double arrow = style.scaled(style.arrowSize);
+            const double span = dim1.distanceTo(dim2);
+            if (span < width + 2.0 * gap + 2.0 * arrow) {
+                const Vec3 toward2 = safeDirection(dim1, dim2, along);
+                middle = dim2 + toward2 * (arrow + gap + width / 2.0);
+            }
 
             if (style.textVerticalPosition == TextVerticalPosition::Centered) {
                 return middle;
