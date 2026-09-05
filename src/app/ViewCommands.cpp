@@ -4,9 +4,14 @@
 #include "Document.hpp"
 #include <cctype>
 
+#include <cmath>
+#include <optional>
+
 #include "cad/db/BlockTableRecord.hpp"
 #include "cad/db/InsertEntity.hpp"
 #include "cad/db/Layout.hpp"
+#include "cad/db/RasterImageEntity.hpp"
+#include "cad/db/UnderlayEntity.hpp"
 #include "cad/db/ViewportEntity.hpp"
 #include "cad/render/Scene.hpp"
 
@@ -720,6 +725,251 @@ private:
     double rotation_ = 0.0;
 };
 
+/// Drawing units per inch, for placing a page or a picture that is measured
+/// in inches or pixels. A unitless drawing takes inches as units.
+[[nodiscard]] double unitsPerInch(const Database& db) {
+    const DrawingUnits units = db.settings.insertionUnits;
+    return units == DrawingUnits::Unitless ? 1.0
+                                           : unitConversionFactor(DrawingUnits::Inches, units);
+}
+
+/// The placement questions PDFATTACH and IMAGEATTACH share once the file is
+/// known: where, how big, which way round.
+class AttachPlacement {
+public:
+    enum class Stage : std::uint8_t { Point, Scale, Rotation, Done };
+
+    [[nodiscard]] StepResult askPoint() {
+        stage_ = Stage::Point;
+        InputRequest request;
+        request.kind = InputRequest::Kind::Point;
+        request.prompt = "Specify insertion point";
+        return StepResult::ask(request);
+    }
+
+    /// Feed one answer. Returns the next question, or nothing when placed.
+    [[nodiscard]] std::optional<StepResult> take(const InputValue& input) {
+        switch (stage_) {
+            case Stage::Point: {
+                if (input.kind != InputValue::Kind::Point) {
+                    return StepResult::cancelled();
+                }
+                position = input.point;
+                stage_ = Stage::Scale;
+                InputRequest request;
+                request.kind = InputRequest::Kind::Number;
+                request.prompt = "Specify scale factor";
+                request.defaultNumber = 1.0;
+                request.allowEmpty = true;
+                request.minimum = 1e-9;
+                return StepResult::ask(request);
+            }
+            case Stage::Scale: {
+                if (input.kind == InputValue::Kind::Number && input.number > 0.0) {
+                    scale = input.number;
+                }
+                stage_ = Stage::Rotation;
+                InputRequest request;
+                request.kind = InputRequest::Kind::Angle;
+                request.prompt = "Specify rotation angle";
+                request.defaultNumber = 0.0;
+                request.allowEmpty = true;
+                return StepResult::ask(request);
+            }
+            case Stage::Rotation:
+            default:
+                if (input.kind == InputValue::Kind::Number) {
+                    rotation = input.number;
+                }
+                stage_ = Stage::Done;
+                return std::nullopt;
+        }
+    }
+
+    Vec3 position;
+    double scale = 1.0;
+    double rotation = 0.0;
+
+private:
+    Stage stage_ = Stage::Point;
+};
+
+/// PDFATTACH — a page of a PDF placed under the drawing to trace over.
+///
+/// The file, then which page when there is more than one, then where and how
+/// big. The page is placed at its printed size, one PDF inch to the drawing's
+/// inch, times the scale asked for.
+class AttachPdfCommand final : public CommandInstance {
+public:
+    explicit AttachPdfCommand(AttachHooks hooks) : hooks_(std::move(hooks)) {}
+
+    StepResult start(CommandContext& /*context*/) override {
+        if (!hooks_.pdfPages || !hooks_.pdfPage) {
+            return StepResult::failed("Attaching a PDF needs the file layer, which is "
+                                      "unavailable here.");
+        }
+        InputRequest request;
+        request.kind = InputRequest::Kind::Text;
+        request.prompt = "Enter the PDF file to attach";
+        return StepResult::ask(request);
+    }
+
+    StepResult supply(const InputValue& input, CommandContext& context) override {
+        if (input.kind == InputValue::Kind::Cancel) {
+            return StepResult::cancelled();
+        }
+        if (path_.empty()) {
+            if (input.kind != InputValue::Kind::Text || input.text.empty()) {
+                return StepResult::cancelled("No file given");
+            }
+            path_ = input.text;
+            const std::string problem = hooks_.pdfPages(path_, &pages_);
+            if (!problem.empty()) {
+                return StepResult::failed(problem);
+            }
+            if (pages_ > 1) {
+                askingPage_ = true;
+                InputRequest request;
+                request.kind = InputRequest::Kind::Number;
+                request.prompt = "Enter the page to attach (1 to " + std::to_string(pages_) + ")";
+                request.defaultNumber = 1.0;
+                request.allowEmpty = true;
+                request.integerOnly = true;
+                request.minimum = 1.0;
+                return StepResult::ask(request);
+            }
+            return measurePage(context);
+        }
+        if (askingPage_) {
+            askingPage_ = false;
+            if (input.kind == InputValue::Kind::Number) {
+                const int chosen = static_cast<int>(input.number);
+                if (chosen < 1 || chosen > pages_) {
+                    return StepResult::failed("The PDF has no page " + std::to_string(chosen) + ".");
+                }
+                page_ = chosen;
+            }
+            return measurePage(context);
+        }
+        if (std::optional<StepResult> next = placement_.take(input)) {
+            return *next;
+        }
+        return place(context);
+    }
+
+private:
+    [[nodiscard]] StepResult measurePage(CommandContext& /*context*/) {
+        const std::string problem = hooks_.pdfPage(path_, page_, &widthPoints_, &heightPoints_);
+        if (!problem.empty()) {
+            return StepResult::failed(problem);
+        }
+        return placement_.askPoint();
+    }
+
+    [[nodiscard]] StepResult place(CommandContext& context) {
+        Database& db = context.db();
+        auto definition = std::make_unique<UnderlayDefinition>();
+        definition->kind = UnderlayKind::Pdf;
+        definition->fileName = path_;
+        definition->itemName = std::to_string(page_);
+        definition->resolvedPath = path_;
+        const Handle definitionHandle = context.transaction().addObject(std::move(definition)).handle;
+
+        const double perInch = unitsPerInch(db);
+        auto underlay = std::make_unique<UnderlayEntity>();
+        underlay->kind = UnderlayKind::Pdf;
+        underlay->definitionHandle = definitionHandle;
+        underlay->position = placement_.position;
+        underlay->scale = Vec3{placement_.scale, placement_.scale, placement_.scale};
+        underlay->rotation = placement_.rotation;
+        underlay->pageSize =
+            Vec3{widthPoints_ / 72.0 * perInch, heightPoints_ / 72.0 * perInch, 0.0};
+        context.transaction().addToCurrentSpace(std::move(underlay));
+        return StepResult::done("PDF page " + std::to_string(page_) + " of " +
+                                std::to_string(pages_) + " attached");
+    }
+
+    AttachHooks hooks_;
+    std::string path_;
+    int pages_ = 0;
+    int page_ = 1;
+    bool askingPage_ = false;
+    double widthPoints_ = 0.0;
+    double heightPoints_ = 0.0;
+    AttachPlacement placement_;
+};
+
+/// IMAGEATTACH — a picture placed in the drawing.
+///
+/// One pixel is one drawing unit at scale 1, which is what other CAD
+/// software does with a picture that carries no resolution of its own.
+class AttachImageCommand final : public CommandInstance {
+public:
+    explicit AttachImageCommand(AttachHooks hooks) : hooks_(std::move(hooks)) {}
+
+    StepResult start(CommandContext& /*context*/) override {
+        if (!hooks_.imageSize) {
+            return StepResult::failed("Attaching an image needs the file layer, which is "
+                                      "unavailable here.");
+        }
+        InputRequest request;
+        request.kind = InputRequest::Kind::Text;
+        request.prompt = "Enter the image file to attach";
+        return StepResult::ask(request);
+    }
+
+    StepResult supply(const InputValue& input, CommandContext& context) override {
+        if (input.kind == InputValue::Kind::Cancel) {
+            return StepResult::cancelled();
+        }
+        if (path_.empty()) {
+            if (input.kind != InputValue::Kind::Text || input.text.empty()) {
+                return StepResult::cancelled("No file given");
+            }
+            path_ = input.text;
+            const std::string problem = hooks_.imageSize(path_, &width_, &height_);
+            if (!problem.empty()) {
+                return StepResult::failed(problem);
+            }
+            return placement_.askPoint();
+        }
+        if (std::optional<StepResult> next = placement_.take(input)) {
+            return *next;
+        }
+        return place(context);
+    }
+
+private:
+    [[nodiscard]] StepResult place(CommandContext& context) {
+        auto definition = std::make_unique<ImageDefinition>();
+        definition->fileName = path_;
+        definition->resolvedPath = path_;
+        definition->sizeInPixels = Vec3{static_cast<double>(width_), static_cast<double>(height_), 0.0};
+        definition->pixelSize = Vec3{1.0, 1.0, 0.0};
+        const Handle definitionHandle = context.transaction().addObject(std::move(definition)).handle;
+
+        auto image = std::make_unique<RasterImageEntity>();
+        image->definitionHandle = definitionHandle;
+        image->origin = placement_.position;
+        const double s = placement_.scale;
+        const double c = std::cos(placement_.rotation);
+        const double n = std::sin(placement_.rotation);
+        image->uVector = Vec3{c * s, n * s, 0.0};
+        image->vVector = Vec3{-n * s, c * s, 0.0};
+        image->widthPixels = width_;
+        image->heightPixels = height_;
+        context.transaction().addToCurrentSpace(std::move(image));
+        return StepResult::done("Image attached, " + std::to_string(width_) + " by " +
+                                std::to_string(height_) + " pixels");
+    }
+
+    AttachHooks hooks_;
+    std::string path_;
+    int width_ = 0;
+    int height_ = 0;
+    AttachPlacement placement_;
+};
+
 [[nodiscard]] CommandDefinition makeDefinition(std::string id, std::string name,
                                                std::vector<std::string> aliases,
                                                std::string title, std::string description,
@@ -783,8 +1033,34 @@ std::vector<CommandDefinition> viewCommands(CanvasWidget* canvas,
                                             std::function<void()> references,
                                             std::function<void()> purge,
                                             std::function<void(const std::string&)> assistant,
-                                            AttachXrefHook attachXref) {
+                                            AttachHooks hooks) {
     std::vector<CommandDefinition> commands;
+    const AttachXrefHook attachXref = hooks.xref;
+
+    {
+        CommandDefinition definition;
+        definition.id = "cad.insert.pdfattach";
+        definition.name = "PDFATTACH";
+        definition.aliases = {"PDFA"};
+        definition.title = "Attach PDF";
+        definition.description = "Place a page of a PDF under the drawing";
+        definition.category = "Insert";
+        definition.supportsPickfirst = false;
+        definition.create = [hooks] { return std::make_unique<AttachPdfCommand>(hooks); };
+        commands.push_back(std::move(definition));
+    }
+    {
+        CommandDefinition definition;
+        definition.id = "cad.insert.imageattach";
+        definition.name = "IMAGEATTACH";
+        definition.aliases = {"IAT"};
+        definition.title = "Attach Image";
+        definition.description = "Place a picture file in the drawing";
+        definition.category = "Insert";
+        definition.supportsPickfirst = false;
+        definition.create = [hooks] { return std::make_unique<AttachImageCommand>(hooks); };
+        commands.push_back(std::move(definition));
+    }
 
     {
         CommandDefinition definition;

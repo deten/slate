@@ -1021,6 +1021,45 @@ TEST_SUITE("Text commands") {
         CHECK_FALSE(texts[0]->styleHandle.isNull());
     }
 
+    TEST_CASE("DRAWORDER moves objects to the front, the back, and beside another") {
+        Harness h;
+        const Handle a = h.db->addToModelSpace(std::make_unique<LineEntity>(Vec3{0, 0, 0}, Vec3{1, 0, 0})).handle;
+        const Handle b = h.db->addToModelSpace(std::make_unique<LineEntity>(Vec3{0, 1, 0}, Vec3{1, 1, 0})).handle;
+        const Handle c = h.db->addToModelSpace(std::make_unique<LineEntity>(Vec3{0, 2, 0}, Vec3{1, 2, 0})).handle;
+        const Handle d = h.db->addToModelSpace(std::make_unique<LineEntity>(Vec3{0, 3, 0}, Vec3{1, 3, 0})).handle;
+        const auto order = [&] { return h.db->modelSpace().entityHandles; };
+        REQUIRE(order() == std::vector<Handle>{a, b, c, d});
+
+        // Front: to the end, keeping their own order.
+        h.selection.setSelection({b, a});
+        h.executor.execute("DRAWORDER");
+        CHECK(h.executor.supply(InputValue::makeKeyword("F")).status ==
+              CommandOutcome::Status::Completed);
+        CHECK(order() == std::vector<Handle>{c, d, a, b});
+
+        // Back: to the start.
+        h.selection.setSelection({d});
+        h.executor.execute("DRAWORDER");
+        h.executor.supply(InputValue::makeKeyword("B"));
+        CHECK(order() == std::vector<Handle>{d, c, a, b});
+
+        // Under c: just before it.
+        h.selection.setSelection({b});
+        h.executor.execute("DRAWORDER");
+        h.executor.supply(InputValue::makeKeyword("U"));
+        h.executor.supply(InputValue::makeEntity(c));
+        CHECK(order() == std::vector<Handle>{d, b, c, a});
+
+        // Above d: just after it, and it undoes.
+        h.selection.setSelection({a});
+        h.executor.execute("DRAWORDER");
+        h.executor.supply(InputValue::makeKeyword("A"));
+        h.executor.supply(InputValue::makeEntity(d));
+        CHECK(order() == std::vector<Handle>{d, a, b, c});
+        h.tm.undo();
+        CHECK(order() == std::vector<Handle>{d, b, c, a});
+    }
+
     TEST_CASE("TEXT Justify hangs the text off its point the way named") {
         Harness h;
         h.executor.execute("TEXT");

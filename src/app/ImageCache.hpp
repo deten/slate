@@ -50,7 +50,7 @@ public:
     /// a placeholder for — the alternative is a blank rectangle indisguishable
     /// from an image that legitimately contains nothing.
     [[nodiscard]] const QImage* image(const QString& path, int targetWidth, int targetHeight,
-                                      const Adjustment& adjustment = {});
+                                      const Adjustment& adjustment = {}, int page = 0);
 
     void clear();
 
@@ -74,6 +74,10 @@ private:
     /// reuse the decode instead of throwing it away. Zooming past a factor of
     /// two is what earns a new one.
     [[nodiscard]] static int levelFor(const QSize& full, int targetWidth, int targetHeight);
+    /// A page of a PDF rendered to about the size it is wanted at.
+    [[nodiscard]] const QImage* pdfPage(const QString& path, int page, int targetWidth,
+                                        int targetHeight, const Adjustment& adjustment);
+    const QImage* store(const QString& key, QImage decoded);
 
     void evictTo(std::size_t budget);
 

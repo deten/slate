@@ -9,6 +9,7 @@
 
 #include <initializer_list>
 #include <string>
+#include <string_view>
 
 #include "cad/db/BlockTableRecord.hpp"
 #include "cad/db/Database.hpp"
@@ -296,6 +297,161 @@ TEST_CASE("a degenerate drag is refused rather than flattening the image") {
     image.moveGrip(image.gripPoints()[2], Vec3::zero());
     CHECK(image.uVector.x == doctest::Approx(1.0));
     CHECK(image.vVector.y == doctest::Approx(1.0));
+}
+
+namespace {
+
+/// How many lines of a DXF text are exactly `value`, whatever the line ending.
+[[nodiscard]] std::size_t linesEqual(const std::string& text, std::string_view value) {
+    std::size_t total = 0;
+    std::size_t start = 0;
+    while (start <= text.size()) {
+        std::size_t end = text.find('\n', start);
+        if (end == std::string::npos) {
+            end = text.size();
+        }
+        std::string_view line{text.data() + start, end - start};
+        if (!line.empty() && line.back() == '\r') {
+            line.remove_suffix(1);
+        }
+        if (line == value) {
+            ++total;
+        }
+        start = end + 1;
+    }
+    return total;
+}
+
+}  // namespace
+
+TEST_CASE("definitions made here are written with their dictionaries and read back") {
+    std::unique_ptr<Database> db = Database::createEmpty();
+
+    auto definition = std::make_unique<ImageDefinition>();
+    definition->fileName = "scans/site.png";
+    definition->sizeInPixels = Vec3{800.0, 600.0, 0.0};
+    definition->pixelSize = Vec3{1.0, 1.0, 0.0};
+    const Handle imageDefinition = db->addObject(std::move(definition)).handle;
+    auto image = std::make_unique<RasterImageEntity>();
+    image->definitionHandle = imageDefinition;
+    image->origin = Vec3{10.0, 20.0, 0.0};
+    image->uVector = Vec3{0.5, 0.0, 0.0};
+    image->vVector = Vec3{0.0, 0.5, 0.0};
+    image->widthPixels = 800.0;
+    image->heightPixels = 600.0;
+    db->addToModelSpace(std::move(image));
+
+    auto pdf = std::make_unique<UnderlayDefinition>();
+    pdf->kind = UnderlayKind::Pdf;
+    pdf->fileName = "plans/sketch.pdf";
+    pdf->itemName = "3";
+    const Handle pdfDefinition = db->addObject(std::move(pdf)).handle;
+    auto underlay = std::make_unique<UnderlayEntity>();
+    underlay->definitionHandle = pdfDefinition;
+    underlay->pageSize = Vec3{210.0, 297.0, 0.0};
+    db->addToModelSpace(std::move(underlay));
+
+    DxfWriter writer;
+    const std::string text = writer.write(*db);
+    // The named object dictionary names both, and each definition is written
+    // from its fields under its own subclass.
+    CHECK(text.find("ACAD_IMAGE_DICT") != std::string::npos);
+    CHECK(text.find("ACAD_PDFDEFINITIONS") != std::string::npos);
+    CHECK(text.find("AcDbRasterImageDef") != std::string::npos);
+    CHECK(text.find("AcDbUnderlayDefinition") != std::string::npos);
+    CHECK(text.find("sketch - 3") != std::string::npos);
+
+    const DxfReadResult again = readDxf(text);
+    REQUIRE(again.database != nullptr);
+    const auto* readImage = again.database->get<ImageDefinition>(imageDefinition);
+    REQUIRE(readImage != nullptr);
+    CHECK(readImage->fileName == "scans/site.png");
+    CHECK(readImage->sizeInPixels.x == doctest::Approx(800.0));
+    CHECK_FALSE(readImage->ownerHandle.isNull());
+    const auto* readPdf = again.database->get<UnderlayDefinition>(pdfDefinition);
+    REQUIRE(readPdf != nullptr);
+    CHECK(readPdf->itemName == "3");
+    CHECK(readPdf->fileName == "plans/sketch.pdf");
+    const RasterImageEntity* placed = firstImage(*again.database);
+    REQUIRE(placed != nullptr);
+    CHECK(placed->definitionHandle == imageDefinition);
+
+    // Saved again, the definitions now come from the file and are written
+    // back as read: still one of each, still one entry each.
+    DxfWriter second;
+    const std::string once = second.write(*again.database);
+    // IMAGEDEF twice: its class declaration, and the object itself.
+    CHECK_EQ(linesEqual(once, "IMAGEDEF"), 2u);
+    CHECK_EQ(linesEqual(once, "AcDbUnderlayDefinition"), 1u);
+    CHECK_EQ(linesEqual(once, "ACAD_IMAGE_DICT"), 1u);
+    CHECK_EQ(linesEqual(once, "ACAD_PDFDEFINITIONS"), 1u);
+}
+
+TEST_CASE("a PDF underlay is read under either name it is written with") {
+    // The converter's name for the entity, as a DWG arrives here.
+    const std::string text =
+        "0\nSECTION\n2\nENTITIES\n"
+        "0\nPDFREFERENCE\n5\n2A\n330\n1F\n100\nAcDbEntity\n8\n0\n"
+        "100\nAcDbUnderlayReference\n340\n2B\n10\n5.0\n20\n6.0\n30\n0.0\n"
+        "41\n2.0\n42\n2.0\n43\n1.0\n50\n0.0\n280\n2\n281\n100\n282\n0\n"
+        "0\nENDSEC\n0\nEOF\n";
+    const DxfReadResult read = readDxf(text);
+    REQUIRE(read.database != nullptr);
+    const UnderlayEntity* underlay = nullptr;
+    for (const Entity* entity : read.database->entitiesIn(read.database->modelSpace())) {
+        underlay = dynamic_cast<const UnderlayEntity*>(entity);
+        if (underlay != nullptr) {
+            break;
+        }
+    }
+    REQUIRE(underlay != nullptr);
+    CHECK(underlay->kind == UnderlayKind::Pdf);
+    CHECK(underlay->position.x == doctest::Approx(5.0));
+    CHECK(underlay->scale.x == doctest::Approx(2.0));
+    CHECK(underlay->definitionHandle == Handle{0x2B});
+}
+
+TEST_CASE("a drawing with an image or a PDF declares their classes when it is written") {
+    std::unique_ptr<Database> db = Database::createEmpty();
+    DxfWriter bare;
+    CHECK(bare.write(*db).find("AcDbRasterImage") == std::string::npos);
+
+    auto pdf = std::make_unique<UnderlayDefinition>();
+    pdf->kind = UnderlayKind::Pdf;
+    pdf->fileName = "sketch.pdf";
+    pdf->itemName = "1";
+    const Handle pdfHandle = db->addObject(std::move(pdf)).handle;
+    auto underlay = std::make_unique<UnderlayEntity>();
+    underlay->definitionHandle = pdfHandle;
+    underlay->pageSize = Vec3{210.0, 297.0, 0.0};
+    db->addToModelSpace(std::move(underlay));
+
+    DxfWriter writer;
+    const std::string text = writer.write(*db);
+    CHECK_EQ(linesEqual(text, "CLASSES"), 1u);
+    CHECK_EQ(linesEqual(text, "AcDbPdfReference"), 1u);
+    CHECK_EQ(linesEqual(text, "AcDbPdfDefinition"), 1u);
+    // Only what the drawing holds: no image classes for a drawing without one.
+    CHECK_EQ(linesEqual(text, "AcDbRasterImage"), 0u);
+
+    // Read back, the classes come from the file; adding an image then declares
+    // the image classes beside them, and declares nothing twice.
+    const DxfReadResult again = readDxf(text);
+    REQUIRE(again.database != nullptr);
+    auto definition = std::make_unique<ImageDefinition>();
+    definition->fileName = "site.png";
+    definition->sizeInPixels = Vec3{10.0, 10.0, 0.0};
+    const Handle imageDefinition = again.database->addObject(std::move(definition)).handle;
+    auto image = std::make_unique<RasterImageEntity>();
+    image->definitionHandle = imageDefinition;
+    image->widthPixels = 10.0;
+    image->heightPixels = 10.0;
+    again.database->addToModelSpace(std::move(image));
+    DxfWriter second;
+    const std::string more = second.write(*again.database);
+    CHECK_EQ(linesEqual(more, "AcDbPdfReference"), 1u);
+    CHECK_EQ(linesEqual(more, "AcDbRasterImageDefReactor"), 1u);
+    CHECK_EQ(linesEqual(more, "CLASSES"), 1u);
 }
 
 TEST_CASE("an image survives a round-trip through the writer") {

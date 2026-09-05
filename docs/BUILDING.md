@@ -86,8 +86,11 @@ Qt is fetched the same way, into `.tools/Qt`:
 
 ```powershell
 python -m pip install aqtinstall
-python -m aqt install-qt windows desktop 6.8.3 win64_msvc2022_64 --outputdir .tools/Qt
+python -m aqt install-qt windows desktop 6.8.3 win64_msvc2022_64 -m qtpdf --outputdir .tools/Qt
 ```
+
+The `qtpdf` module is what draws PDF underlays. Without it the build fails at
+configure time asking for `Qt6Pdf`.
 
 `build.ps1` finds it automatically. If Qt is absent the build still succeeds —
 it just skips the application shell and builds the engine and tests, which is

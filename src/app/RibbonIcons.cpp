@@ -683,6 +683,38 @@ void letterA(const Ink& ink, qreal x, qreal y, qreal h) {
              i.line(22, 8, 22, 16);
              i.newLine(12, 12, 22, 12);
          }},
+        {"DRAWORDER",
+         [](const Ink& i) {
+             // Two overlapping sheets, the front one in the accent.
+             i.rect(3, 3, 13, 13);
+             i.painter->setPen(i.accent);
+             i.painter->setBrush(Qt::NoBrush);
+             i.painter->drawRect(QRectF{8.5, 8.5, 12, 12});
+         }},
+        {"PDFATTACH",
+         [](const Ink& i) {
+             // A page with a folded corner and a few lines of print.
+             i.line(5, 3, 15, 3);
+             i.line(15, 3, 19, 7);
+             i.line(19, 7, 19, 21);
+             i.line(19, 21, 5, 21);
+             i.line(5, 21, 5, 3);
+             i.line(15, 3, 15, 7);
+             i.line(15, 7, 19, 7);
+             i.newLine(8, 11, 16, 11);
+             i.line(8, 14, 16, 14);
+             i.line(8, 17, 13, 17);
+         }},
+        {"IMAGEATTACH",
+         [](const Ink& i) {
+             // A picture: a frame, a hill, and a sun.
+             i.rect(3, 4, 18, 16);
+             i.newLine(5, 18, 11, 11);
+             i.line(11, 11, 14, 15);
+             i.line(14, 15, 16, 13);
+             i.line(16, 13, 19, 18);
+             i.painter->drawEllipse(QPointF{15.5, 8.5}, 1.8, 1.8);
+         }},
         {"XATTACH",
          [](const Ink& i) {
              // A sheet with another sheet clipped onto its corner.

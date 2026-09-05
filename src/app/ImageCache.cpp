@@ -1,6 +1,8 @@
 #include "ImageCache.hpp"
 
 #include <QImageReader>
+#include <QPainter>
+#include <QPdfDocument>
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -65,10 +67,84 @@ int ImageCache::levelFor(const QSize& full, int targetWidth, int targetHeight) {
     return std::clamp(static_cast<int>(std::floor(std::log2(ratio))), 0, 6);
 }
 
+const QImage* ImageCache::store(const QString& key, QImage decoded) {
+    Entry entry;
+    entry.bytes = static_cast<std::size_t>(decoded.sizeInBytes());
+    entry.image = std::move(decoded);
+    entry.key = key;
+
+    // Evict before inserting, and leave room for what is about to arrive, so
+    // that a single image larger than the budget still displays rather than
+    // evicting itself the moment it lands.
+    evictTo(entry.bytes < budgetBytes_ ? budgetBytes_ - entry.bytes : 0);
+
+    bytes_ += entry.bytes;
+    entries_.push_front(std::move(entry));
+    index_.insert(key, entries_.begin());
+    return &entries_.front().image;
+}
+
+const QImage* ImageCache::pdfPage(const QString& path, int page, int targetWidth,
+                                  int targetHeight, const Adjustment& adjustment) {
+    // Rendered at a power-of-two width near what is asked for, so a page
+    // being zoomed is rendered a handful of times rather than every frame,
+    // and never absurdly large.
+    int width = 256;
+    while (width < targetWidth && width < 4096) {
+        width *= 2;
+    }
+    const QString failKey = QStringLiteral("%1#%2").arg(path).arg(page);
+    if (failed_.contains(failKey)) {
+        return nullptr;
+    }
+    const QString key = QStringLiteral("%1#%2|%3|%4|%5")
+                            .arg(path)
+                            .arg(page)
+                            .arg(width)
+                            .arg(adjustment.brightness)
+                            .arg(adjustment.contrast);
+    if (const auto it = index_.find(key); it != index_.end()) {
+        entries_.splice(entries_.begin(), entries_, it.value());
+        it.value() = entries_.begin();
+        return &entries_.front().image;
+    }
+
+    QPdfDocument document;
+    if (document.load(path) != QPdfDocument::Error::None || page < 0 ||
+        page >= document.pageCount()) {
+        failed_.insert(failKey, true);
+        return nullptr;
+    }
+    const QSizeF points = document.pagePointSize(page);
+    if (points.width() <= 0.0 || points.height() <= 0.0) {
+        failed_.insert(failKey, true);
+        return nullptr;
+    }
+    const int height = std::max(1, static_cast<int>(std::lround(width * points.height() /
+                                                                 points.width())));
+    static_cast<void>(targetHeight);
+    QImage rendered = document.render(page, QSize{width, height});
+    if (rendered.isNull()) {
+        failed_.insert(failKey, true);
+        return nullptr;
+    }
+    // A page is paper: opaque and white behind whatever is printed on it.
+    QImage paper{rendered.size(), QImage::Format_ARGB32};
+    paper.fill(Qt::white);
+    {
+        QPainter painter{&paper};
+        painter.drawImage(0, 0, rendered);
+    }
+    return store(key, adjusted(paper, adjustment));
+}
+
 const QImage* ImageCache::image(const QString& path, int targetWidth, int targetHeight,
-                                const Adjustment& adjustment) {
+                                const Adjustment& adjustment, int page) {
     if (path.isEmpty() || failed_.contains(path)) {
         return nullptr;
+    }
+    if (path.endsWith(QStringLiteral(".pdf"), Qt::CaseInsensitive)) {
+        return pdfPage(path, page, targetWidth, targetHeight, adjustment);
     }
 
     QImageReader reader{path};
@@ -102,22 +178,7 @@ const QImage* ImageCache::image(const QString& path, int targetWidth, int target
         failed_.insert(path, true);
         return nullptr;
     }
-    decoded = adjusted(decoded, adjustment);
-
-    Entry entry;
-    entry.bytes = static_cast<std::size_t>(decoded.sizeInBytes());
-    entry.image = std::move(decoded);
-    entry.key = key;
-
-    // Evict before inserting, and leave room for what is about to arrive, so
-    // that a single image larger than the budget still displays rather than
-    // evicting itself the moment it lands.
-    evictTo(entry.bytes < budgetBytes_ ? budgetBytes_ - entry.bytes : 0);
-
-    bytes_ += entry.bytes;
-    entries_.push_front(std::move(entry));
-    index_.insert(key, entries_.begin());
-    return &entries_.front().image;
+    return store(key, adjusted(decoded, adjustment));
 }
 
 void ImageCache::evictTo(std::size_t budget) {

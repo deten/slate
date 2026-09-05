@@ -34,10 +34,23 @@ class CanvasWidget;
 using AttachXrefHook =
     std::function<std::string(const std::string& path, bool overlay, Handle* block)>;
 
+/// What the attach commands ask of the file layer. Each returns the problem
+/// in words, or an empty string and the answer through its pointers.
+struct AttachHooks {
+    AttachXrefHook xref;
+    /// How many pages a PDF has.
+    std::function<std::string(const std::string& path, int* pages)> pdfPages;
+    /// A page's size in points, pages counted from one.
+    std::function<std::string(const std::string& path, int page, double* width, double* height)>
+        pdfPage;
+    /// An image's size in pixels.
+    std::function<std::string(const std::string& path, int* width, int* height)> imageSize;
+};
+
 [[nodiscard]] std::vector<CommandDefinition> viewCommands(
     CanvasWidget* canvas, std::function<bool(const std::string&)> switchLayout = {},
     std::function<void()> quickSelect = {},
     std::function<void()> references = {}, std::function<void()> purge = {},
-    std::function<void(const std::string&)> assistant = {}, AttachXrefHook attachXref = {});
+    std::function<void(const std::string&)> assistant = {}, AttachHooks hooks = {});
 
 }  // namespace cad::app

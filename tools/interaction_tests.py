@@ -695,6 +695,50 @@ def test_xattach_brings_another_drawing_in_as_a_reference(work: Path) -> None:
     expect(inserts[0].get("10", "").startswith("100"), f"the insert is not at 100,100:\n{inserts[0]}")
 
 
+def test_pdf_and_image_attach_and_save_with_their_definitions(work: Path) -> None:
+    """A PDF page and a picture are placed, drawn, and written out whole.
+
+    Written whole means the definitions other software looks up: the
+    dictionary entries, the definition objects, and the class declarations
+    without which a reader drops the underlay on the floor.
+    """
+    pdf = work / "sketch.pdf"
+    subprocess.run([str(EXE), "-platform", "offscreen", "--no-recovery-prompt",
+                    "--run", "CIRCLE", "--run", "50,50", "--run", "40",
+                    "--export-pdf", str(pdf)], capture_output=True, text=True, timeout=180,
+                   cwd=str(ROOT))
+    expect(pdf.exists(), "the PDF used as the underlay was not exported")
+    picture = work / "picture.png"
+    subprocess.run([str(EXE), "-platform", "offscreen", "--no-recovery-prompt", "--size", "400x300",
+                    "--screenshot", str(picture)], capture_output=True, text=True, timeout=180,
+                   cwd=str(ROOT))
+    expect(picture.exists(), "the picture used as the image was not made")
+
+    log, saved = run(work, "attach-pdf-image", [
+        "--run", "PDFATTACH", "--run", str(pdf), "--run", "0,0", "--run", "", "--run", "",
+        "--run", "IMAGEATTACH", "--run", str(picture), "--run", "300,0", "--run", "0.5",
+        "--run", "",
+    ])
+    expect("PDF page 1 of 1 attached" in log, f"the PDF was not attached:\n{log}")
+    expect("Image attached, 400 by " in log, f"the image was not attached:\n{log}")
+
+    underlays = records(saved, "PDFUNDERLAY")
+    expect(len(underlays) == 1, f"expected one PDF underlay, found {len(underlays)}")
+    definitions = records(saved, "PDFDEFINITION")
+    expect(len(definitions) == 1 and definitions[0].get("2") == "1",
+           f"the PDF definition does not name its page:\n{definitions}")
+    images = records(saved, "IMAGE")
+    expect(len(images) == 1 and images[0].get("13", "").startswith("400"),
+           f"the image was not written with its pixel size:\n{images}")
+    expect(len(records(saved, "IMAGEDEF")) == 1, "the image definition was not written")
+    classes = [c.get("1") for c in records(saved, "CLASS")]
+    for needed in ("PDFUNDERLAY", "PDFDEFINITION", "IMAGE", "IMAGEDEF"):
+        expect(needed in classes, f"class {needed} is not declared:\n{classes}")
+    text = saved.read_text(encoding="utf-8", errors="replace")
+    expect("ACAD_PDFDEFINITIONS" in text and "ACAD_IMAGE_DICT" in text,
+           "the dictionaries naming the definitions were not written")
+
+
 def test_the_assistant_draws_what_it_proposes(work: Path) -> None:
     """A sentence in, geometry out, with no network in the way.
 
@@ -1387,6 +1431,7 @@ SCENARIOS = [
     test_dragging_one_arc_end_keeps_the_centre,
     test_hatch_picked_inside_a_room_traces_the_walls,
     test_xattach_brings_another_drawing_in_as_a_reference,
+    test_pdf_and_image_attach_and_save_with_their_definitions,
     test_the_assistant_draws_what_it_proposes,
     test_the_plan_is_shown_before_it_runs,
     test_an_invented_command_is_refused_and_the_rest_still_run,

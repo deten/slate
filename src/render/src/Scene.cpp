@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <chrono>
+#include <limits>
+#include <unordered_map>
 
 #include "cad/db/CurveEntities.hpp"
 #include "cad/db/DimensionEntity.hpp"
@@ -772,8 +774,57 @@ void SceneBuilder::appendEntity(const Entity& entity, const Mat4& transform,
     // contain. Before this they rendered as nothing at all, which left a user
     // able to select something they could not see.
     if (const auto* underlay = dynamic_cast<const UnderlayEntity*>(&entity)) {
+        const auto* definition = db_.get<UnderlayDefinition>(underlay->definitionHandle);
+        // A PDF page whose file was found and whose size is known is a
+        // picture like any other: the backend renders the page. The engine
+        // only says where it goes, as with an image.
+        const bool drawable = definition != nullptr && !definition->resolvedPath.empty() &&
+                              underlay->kind == UnderlayKind::Pdf && underlay->underlayOn &&
+                              underlay->pageSize.x > 0.0 && underlay->pageSize.y > 0.0;
+        if (drawable) {
+            const Mat4 placement = underlay->placementTransform();
+            SceneImage payload;
+            payload.path = definition->resolvedPath;
+            payload.storedPath = definition->fileName;
+            // Pages are numbered from one in the file and from zero here.
+            int page = 0;
+            try {
+                page = std::max(0, std::stoi(definition->itemName) - 1);
+            } catch (const std::exception&) {
+                page = 0;
+            }
+            payload.page = page;
+            const Vec3 size = underlay->pageSize;
+            payload.topLeft = transform.transformPoint(placement.transformPoint(Vec3{0.0, size.y, 0.0}));
+            payload.across = transform.transformVector(placement.transformVector(Vec3{size.x, 0.0, 0.0}));
+            payload.down = transform.transformVector(placement.transformVector(Vec3{0.0, -size.y, 0.0}));
+            if (underlay->clippingEnabled && underlay->clipVertices.size() >= 2) {
+                for (const Vec3& point : underlay->displayOutline()) {
+                    payload.clip.push_back(transform.transformPoint(point));
+                }
+            }
+            payload.fade = underlay->fade;
+
+            DrawItem picture;
+            picture.kind = DrawItem::Kind::Image;
+            picture.handle = underlay->handle;
+            picture.style = item.style;
+            picture.reference = scene.images.size();
+            scene.images.push_back(std::move(payload));
+            scene.items.push_back(std::move(picture));
+            if (options.showImageFrames) {
+                DrawItem outline;
+                outline.kind = DrawItem::Kind::Geometry;
+                outline.handle = underlay->handle;
+                outline.style = item.style;
+                outline.geometry.push_back(closedRun(underlay->displayOutline(), transform));
+                scene.items.push_back(std::move(outline));
+            }
+            return;
+        }
+
         std::string caption{underlayKindName(underlay->kind)};
-        if (const auto* definition = db_.get<UnderlayDefinition>(underlay->definitionHandle)) {
+        if (definition != nullptr) {
             caption += ": " + definition->fileName;
             if (!definition->itemName.empty()) {
                 caption += " (" + definition->itemName + ")";
@@ -1025,7 +1076,27 @@ void SceneBuilder::expandInsert(const Entity& insertEntity, const Mat4& parentTr
 // call site read correctly, but the build walks the index rather than the
 // record: the index already holds exactly that space's contents, and querying
 // it is the whole point of having one.
-Scene SceneBuilder::build(const BlockTableRecord& /*space*/, const Viewport& viewport,
+/// Put handles into the order their space draws them: the order the record
+/// keeps them in, which DRAWORDER rearranges. The index hands them back in
+/// its own order, and a hatch drawn after the wall it fills would hide it.
+void sortByDrawOrder(std::vector<Handle>& handles, const BlockTableRecord& space) {
+    if (handles.size() < 2) {
+        return;
+    }
+    std::unordered_map<Handle, std::size_t> rank;
+    rank.reserve(space.entityHandles.size());
+    for (std::size_t i = 0; i < space.entityHandles.size(); ++i) {
+        rank.emplace(space.entityHandles[i], i);
+    }
+    const auto rankOf = [&](Handle handle) {
+        const auto found = rank.find(handle);
+        return found == rank.end() ? std::numeric_limits<std::size_t>::max() : found->second;
+    };
+    std::stable_sort(handles.begin(), handles.end(),
+                     [&](Handle a, Handle b) { return rankOf(a) < rankOf(b); });
+}
+
+Scene SceneBuilder::build(const BlockTableRecord& space, const Viewport& viewport,
                           const SceneOptions& options) {
     const double started = nowMilliseconds();
     contextCache_.clear();
@@ -1034,7 +1105,8 @@ Scene SceneBuilder::build(const BlockTableRecord& /*space*/, const Viewport& vie
     const Box3 visible = viewport.visibleBounds();
     const double minWorldSize = viewport.pixelsToWorld(options.minPixelSize);
 
-    const std::vector<Handle> candidates = index_.search(visible);
+    std::vector<Handle> candidates = index_.search(visible);
+    sortByDrawOrder(candidates, space);
     scene.totalCandidates = index_.size();
 
     for (const Handle handle : candidates) {
@@ -1104,7 +1176,9 @@ void SceneBuilder::appendViewportContents(const ViewportEntity& window, const Vi
 
     // The model's index, not the sheet's: see setModelIndex.
     const SpatialIndex& model = modelIndex_ != nullptr ? *modelIndex_ : index_;
-    for (const Handle handle : model.search(wanted)) {
+    std::vector<Handle> shown = model.search(wanted);
+    sortByDrawOrder(shown, db_.modelSpace());
+    for (const Handle handle : shown) {
         if (scene.items.size() >= options.maxItems) {
             break;
         }

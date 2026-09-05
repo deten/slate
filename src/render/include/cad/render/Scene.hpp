@@ -164,6 +164,10 @@ struct SceneImage {
     int contrast = 50;
     /// 0-100, 0 fully opaque.
     int fade = 0;
+
+    /// Which page, counting from zero, when the file is a document with pages
+    /// rather than a picture. A PDF underlay says which page it shows.
+    int page = 0;
 };
 
 /// A stretch of a text item drawn with its own font.

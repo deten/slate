@@ -9,7 +9,7 @@
 
 # PrintSupport for plotting. A CAD drawing set that cannot be put on paper is
 # not a deliverable, and PDF export goes through the same path.
-find_package(Qt6 6.5 REQUIRED COMPONENTS Core Gui Widgets PrintSupport Network)
+find_package(Qt6 6.5 REQUIRED COMPONENTS Core Gui Widgets PrintSupport Network Pdf)
 
 qt_standard_project_setup()
 
@@ -35,6 +35,8 @@ qt_add_executable(cad_app WIN32
     HttpAgentProvider.cpp
     ReferenceLibrary.cpp
     ReferenceLibrary.hpp
+    PdfPages.cpp
+    PdfPages.hpp
     LayerOrdering.cpp
     LayerPanel.cpp
     LayerPanel.hpp
@@ -91,6 +93,7 @@ target_link_libraries(cad_app
         Qt6::Widgets
         Qt6::PrintSupport
         Qt6::Network
+        Qt6::Pdf
         cad_warnings
 )
 

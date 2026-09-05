@@ -107,7 +107,8 @@ const std::vector<RibbonTab>& ribbonLayout() {
                {"ROTATE", kSmall},
                {"MIRROR", kSmall},
                {"SCALE", kSmall},
-               {"STRETCH", kSmall}}},
+               {"STRETCH", kSmall},
+               {"DRAWORDER", kSmall}}},
              {"Reshape",
               {{"TRIM", kLarge},
                {"EXTEND", kLarge},
@@ -128,7 +129,7 @@ const std::vector<RibbonTab>& ribbonLayout() {
                {"ATTDEF", kSmall},
                {"ATTEDIT", kSmall},
                {"ATTSYNC", kSmall}}},
-             {"External", {{"XATTACH", kLarge}}},
+             {"External", {{"XATTACH", kLarge}, {"PDFATTACH", kSmall}, {"IMAGEATTACH", kSmall}}},
              {"Reference", {{"REFERENCES", kLarge}}},
          }},
 

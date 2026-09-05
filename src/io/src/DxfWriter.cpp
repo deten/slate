@@ -2,8 +2,12 @@
 
 #include <algorithm>
 #include <charconv>
-#include <set>
 #include <fstream>
+#include <map>
+#include <set>
+#include <span>
+#include <type_traits>
+#include <variant>
 
 #include "cad/db/CurveEntities.hpp"
 #include "cad/db/SolidEntity.hpp"
@@ -812,7 +816,9 @@ void DxfBuilder::identity(const DbObject& object, int handleCode) {
     }
 }
 
-void DxfBuilder::preserved(const DbObject& object) {
+void DxfBuilder::preserved(const DbObject& object) { preserved(object, {}); }
+
+void DxfBuilder::preserved(const DbObject& object, std::span<const UnknownGroup> extra) {
     const auto emit = [this](const UnknownGroup& group) {
         std::visit([&](const auto& value) { pair(group.code, value); }, group.value);
     };
@@ -821,6 +827,11 @@ void DxfBuilder::preserved(const DbObject& object) {
         for (const UnknownGroup& group : object.preserved->unknownCodes) {
             emit(group);
         }
+    }
+    for (const UnknownGroup& group : extra) {
+        emit(group);
+    }
+    if (object.preserved != nullptr) {
         // Then the embedded object, in the order it was read. It must follow
         // the owning object's own groups and precede XData, which is where the
         // code-101 marker sat in the file.
@@ -1565,18 +1576,117 @@ void DxfWriter::writePreservedSections(const Database& db, DxfBuilder& out, bool
         out.pair(0, "ENDSEC");
     };
 
+    if (classes) {
+        // The classes the drawing needs declared for objects it holds that
+        // are not in the base set. Other CAD software drops an image or a
+        // PDF page whose class the file never declared; a drawing that began
+        // here has no CLASSES section at all, and one that came from a file
+        // may lack the class for what was attached since.
+        struct ClassRecord {
+            const char* name;
+            const char* cppClass;
+            const char* application;
+            int proxyFlags;
+            int instances;
+            bool isEntity;
+        };
+        static constexpr ClassRecord kImageClasses[] = {
+            {"IMAGEDEF", "AcDbRasterImageDef", "ISM", 0, 3, false},
+            {"IMAGEDEF_REACTOR", "AcDbRasterImageDefReactor", "ISM", 1, 3, false},
+            {"IMAGE", "AcDbRasterImage", "ISM", 127, 4, true},
+            {"RASTERVARIABLES", "AcDbRasterVariables", "ISM", 0, 3, false},
+        };
+        static constexpr ClassRecord kPdfClasses[] = {
+            {"PDFDEFINITION", "AcDbPdfDefinition", "ObjectDBX Classes", 1153, 3, false},
+            // Declared under the record name the entity is written with. A
+            // declaration under any other name leaves the converter with an
+            // entity of no known class, which it drops without a word.
+            {"PDFUNDERLAY", "AcDbPdfReference", "ObjectDBX Classes", 1153, 3, true},
+        };
+        bool hasImages = false;
+        bool hasPdfs = false;
+        for (const Handle handle : db.objectHandles()) {
+            const DbObject* object = db.getObject(handle);
+            if (object == nullptr || object->erased) {
+                continue;
+            }
+            hasImages = hasImages || dynamic_cast<const ImageDefinition*>(object) != nullptr ||
+                        dynamic_cast<const RasterImageEntity*>(object) != nullptr;
+            if (const auto* definition = dynamic_cast<const UnderlayDefinition*>(object);
+                definition != nullptr && definition->kind == UnderlayKind::Pdf) {
+                hasPdfs = true;
+            }
+            if (const auto* underlay = dynamic_cast<const UnderlayEntity*>(object);
+                underlay != nullptr && underlay->kind == UnderlayKind::Pdf) {
+                hasPdfs = true;
+            }
+        }
+        std::vector<const ClassRecord*> needed;
+        if (hasImages) {
+            for (const ClassRecord& record : kImageClasses) {
+                needed.push_back(&record);
+            }
+        }
+        if (hasPdfs) {
+            for (const ClassRecord& record : kPdfClasses) {
+                needed.push_back(&record);
+            }
+        }
+
+        const PreservedSection* existing = nullptr;
+        for (const PreservedSection& section : db.preservedSections) {
+            if (!section.isTable && section.name == "CLASSES") {
+                existing = &section;
+                break;
+            }
+        }
+        std::set<std::string> declared;
+        if (existing != nullptr) {
+            for (const UnknownGroup& group : existing->groups) {
+                if (group.code == 1) {
+                    if (const auto* text = std::get_if<std::string>(&group.value)) {
+                        declared.insert(*text);
+                    }
+                }
+            }
+        }
+        std::vector<const ClassRecord*> missing;
+        for (const ClassRecord* record : needed) {
+            if (!declared.contains(record->name)) {
+                missing.push_back(record);
+            }
+        }
+        if (existing == nullptr && missing.empty()) {
+            return;
+        }
+
+        out.pair(0, "SECTION");
+        out.pair(2, "CLASSES");
+        if (existing != nullptr) {
+            writePreservedSection(*existing, out);
+        }
+        for (const ClassRecord* record : missing) {
+            out.pair(0, "CLASS");
+            out.pair(1, record->name);
+            out.pair(2, record->cppClass);
+            out.pair(3, record->application);
+            out.pair(90, record->proxyFlags);
+            out.pair(91, record->instances);
+            out.pair(280, 0);
+            out.pair(281, record->isEntity ? 1 : 0);
+        }
+        out.pair(0, "ENDSEC");
+        return;
+    }
+
     for (const PreservedSection& section : db.preservedSections) {
-        if (section.isTable || (section.name == "CLASSES") != classes) {
+        if (section.isTable || section.name == "CLASSES") {
             continue;
         }
-        if (!classes && isAcdsData(section)) {
+        if (isAcdsData(section)) {
             continue;  // Written after everything else, below.
         }
         write(section);
-    }
-
-    if (classes) {
-        return;
     }
     for (const PreservedSection& section : db.preservedSections) {
         if (!section.isTable && isAcdsData(section)) {
@@ -1632,28 +1742,143 @@ void DxfWriter::writeObjects(const Database& db, DxfBuilder& out) {
     const bool hasDictionaries = std::ranges::any_of(
         raw, [](const RawObject* object) { return object->dxfType == "DICTIONARY"; });
 
+    // Definitions made here rather than read: an image or a PDF page attached
+    // in this session. They have no bytes of their own to write back, so
+    // their groups come from their fields, and each needs a place in the
+    // named object dictionary that a file-born definition already has.
+    struct FreshDefinition {
+        const DbObject* object;
+        std::string dictionary;
+        std::string name;
+    };
+    std::vector<FreshDefinition> fresh;
+    const auto stemOf = [](const std::string& path) {
+        const std::size_t slash = path.find_last_of("/\\");
+        std::string name = slash == std::string::npos ? path : path.substr(slash + 1);
+        const std::size_t dot = name.find_last_of('.');
+        return dot == std::string::npos || dot == 0 ? name : name.substr(0, dot);
+    };
+    for (const auto& [dxfType, object] : preservedObjects) {
+        if (object->preserved != nullptr) {
+            continue;
+        }
+        if (const auto* image = dynamic_cast<const ImageDefinition*>(object)) {
+            fresh.push_back({object, "ACAD_IMAGE_DICT", stemOf(image->fileName)});
+        } else if (const auto* underlay = dynamic_cast<const UnderlayDefinition*>(object)) {
+            std::string name = stemOf(underlay->fileName);
+            if (!underlay->itemName.empty()) {
+                name += " - " + underlay->itemName;
+            }
+            fresh.push_back({object,
+                             "ACAD_" + std::string{underlayKindName(underlay->kind)} + "DEFINITIONS",
+                             std::move(name)});
+        }
+    }
+
+    // The root dictionary the file brought, and the dictionaries it names.
+    const RawObject* root = nullptr;
+    std::map<std::string, Handle> dictionaryFor;
+    for (const RawObject* object : raw) {
+        if (object->dxfType == "DICTIONARY" && object->ownerHandle.isNull()) {
+            root = object;
+            break;
+        }
+    }
+    if (root != nullptr && root->preserved != nullptr) {
+        std::string pendingName;
+        for (const UnknownGroup& group : root->preserved->unknownCodes) {
+            if (group.code == 3) {
+                if (const auto* text = std::get_if<std::string>(&group.value)) {
+                    pendingName = *text;
+                }
+            } else if (group.code == 350 && !pendingName.empty()) {
+                std::visit(
+                    [&](const auto& value) {
+                        using T = std::decay_t<decltype(value)>;
+                        if constexpr (std::is_same_v<T, std::string>) {
+                            if (const auto handle = Handle::tryParse(value)) {
+                                dictionaryFor[pendingName] = *handle;
+                            }
+                        } else if constexpr (std::is_same_v<T, Handle>) {
+                            dictionaryFor[pendingName] = value;
+                        }
+                    },
+                    group.value);
+                pendingName.clear();
+            }
+        }
+    }
+
+    // Dictionaries the fresh definitions need that the drawing lacks, and the
+    // entries to add to the ones it has.
+    std::vector<std::pair<std::string, Handle>> newDictionaries;
+    std::map<Handle, std::vector<UnknownGroup>> extraEntries;
+    for (const FreshDefinition& definition : fresh) {
+        if (!dictionaryFor.contains(definition.dictionary)) {
+            const Handle handle = nextSpareHandle();
+            dictionaryFor[definition.dictionary] = handle;
+            newDictionaries.emplace_back(definition.dictionary, handle);
+            if (root != nullptr) {
+                extraEntries[root->handle].push_back({3, definition.dictionary});
+                extraEntries[root->handle].push_back({350, handle.toString()});
+            }
+        }
+        const Handle dictionary = dictionaryFor[definition.dictionary];
+        const bool isNew = std::ranges::any_of(
+            newDictionaries, [&](const auto& entry) { return entry.second == dictionary; });
+        if (!isNew) {
+            extraEntries[dictionary].push_back({3, definition.name});
+            extraEntries[dictionary].push_back({350, definition.object->handle.toString()});
+        }
+    }
+
     Handle layoutDictionary;
-    if (!hasDictionaries && !layouts.empty()) {
-        const Handle root = nextSpareHandle();
-        layoutDictionary = nextSpareHandle();
+    Handle madeRoot;
+    if (!hasDictionaries && (!layouts.empty() || !fresh.empty())) {
+        madeRoot = nextSpareHandle();
+        if (!layouts.empty()) {
+            layoutDictionary = nextSpareHandle();
+        }
 
         out.pair(0, "DICTIONARY");
-        out.pair(5, root);
+        out.pair(5, madeRoot);
         // Owned by the drawing itself, which is what handle zero means here.
         out.pair(330, Handle::null());
         out.pair(100, "AcDbDictionary");
         out.pair(281, 1);
-        out.pair(3, "ACAD_LAYOUT");
-        out.pair(350, layoutDictionary);
+        if (!layouts.empty()) {
+            out.pair(3, "ACAD_LAYOUT");
+            out.pair(350, layoutDictionary);
+        }
+        for (const auto& [name, handle] : newDictionaries) {
+            out.pair(3, name);
+            out.pair(350, handle);
+        }
 
+        if (!layouts.empty()) {
+            out.pair(0, "DICTIONARY");
+            out.pair(5, layoutDictionary);
+            out.pair(330, madeRoot);
+            out.pair(100, "AcDbDictionary");
+            out.pair(281, 1);
+            for (const Layout* layout : layouts) {
+                out.pair(3, layout->name);
+                out.pair(350, layout->handle);
+            }
+        }
+    }
+
+    for (const auto& [name, handle] : newDictionaries) {
         out.pair(0, "DICTIONARY");
-        out.pair(5, layoutDictionary);
-        out.pair(330, root);
+        out.pair(5, handle);
+        out.pair(330, root != nullptr ? root->handle : madeRoot);
         out.pair(100, "AcDbDictionary");
         out.pair(281, 1);
-        for (const Layout* layout : layouts) {
-            out.pair(3, layout->name);
-            out.pair(350, layout->handle);
+        for (const FreshDefinition& definition : fresh) {
+            if (definition.dictionary == name) {
+                out.pair(3, definition.name);
+                out.pair(350, definition.object->handle);
+            }
         }
     }
 
@@ -1663,7 +1888,12 @@ void DxfWriter::writeObjects(const Database& db, DxfBuilder& out) {
         if (!object->ownerHandle.isNull()) {
             out.pair(330, object->ownerHandle);
         }
-        out.preserved(*object);
+        const auto extra = extraEntries.find(object->handle);
+        if (extra != extraEntries.end()) {
+            out.preserved(*object, extra->second);
+        } else {
+            out.preserved(*object);
+        }
     }
 
     // A field is read for its meaning and written back for its bytes.
@@ -1685,6 +1915,29 @@ void DxfWriter::writeObjects(const Database& db, DxfBuilder& out) {
     for (const auto& [dxfType, object] : preservedObjects) {
         out.pair(0, dxfType);
         out.identity(*object);
+        const auto made = std::ranges::find_if(
+            fresh, [&](const FreshDefinition& definition) { return definition.object == object; });
+        if (made != fresh.end()) {
+            // Made here: owned by its dictionary, groups from its fields.
+            out.pair(330, dictionaryFor[made->dictionary]);
+            if (const auto* image = dynamic_cast<const ImageDefinition*>(object)) {
+                out.pair(100, "AcDbRasterImageDef");
+                out.pair(90, 0);
+                out.pair(1, image->fileName);
+                out.pair(10, image->sizeInPixels.x);
+                out.pair(20, image->sizeInPixels.y);
+                out.pair(11, image->pixelSize.x);
+                out.pair(21, image->pixelSize.y);
+                out.pair(280, image->loaded ? 1 : 0);
+                out.pair(281, image->resolutionUnits);
+            } else if (const auto* underlay = dynamic_cast<const UnderlayDefinition*>(object)) {
+                out.pair(100, "AcDbUnderlayDefinition");
+                out.pair(1, underlay->fileName);
+                out.pair(2, underlay->itemName);
+            }
+            out.preserved(*object);
+            continue;
+        }
         if (!object->ownerHandle.isNull()) {
             out.pair(330, object->ownerHandle);
         }

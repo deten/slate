@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <format>
 #include <unordered_map>
@@ -1527,6 +1528,174 @@ private:
     }
 };
 
+/// Whether a typed keyword is the one starting with `initial`.
+[[nodiscard]] bool matchesKeyword(const std::string& typed, char initial) {
+    return !typed.empty() &&
+           std::toupper(static_cast<unsigned char>(typed.front())) == initial;
+}
+
+/// DRAWORDER — which objects draw over which.
+///
+/// The order objects are kept in is the order they are drawn in, here and in
+/// the file, so this is a reordering of the space's list: to the front, to
+/// the back, or just above or below one other object. A hatch sent to the
+/// back stops hiding the walls it fills between.
+class DrawOrderCommand final : public CommandInstance {
+public:
+    StepResult start(CommandContext& context) override {
+        if (!context.initialSelection().empty()) {
+            selection_ = context.initialSelection();
+            return askMode();
+        }
+        InputRequest request;
+        request.kind = InputRequest::Kind::Selection;
+        request.prompt = "Select objects to reorder";
+        request.minCount = 1;
+        return StepResult::ask(request);
+    }
+
+    StepResult supply(const InputValue& input, CommandContext& context) override {
+        if (input.kind == InputValue::Kind::Cancel) {
+            return StepResult::cancelled();
+        }
+        switch (stage_) {
+            case Stage::Select:
+                if (input.kind == InputValue::Kind::Selection) {
+                    selection_ = input.selection;
+                } else if (input.kind == InputValue::Kind::Entity) {
+                    selection_ = {input.entity};
+                }
+                if (selection_.empty()) {
+                    return StepResult::cancelled("Nothing selected.");
+                }
+                return askMode();
+            case Stage::Mode: {
+                if (input.kind == InputValue::Kind::Keyword || input.kind == InputValue::Kind::Text) {
+                    if (matchesKeyword(input.text, 'A')) {
+                        mode_ = Mode::Above;
+                    } else if (matchesKeyword(input.text, 'U')) {
+                        mode_ = Mode::Under;
+                    } else if (matchesKeyword(input.text, 'F')) {
+                        mode_ = Mode::Front;
+                    } else {
+                        mode_ = Mode::Back;
+                    }
+                }
+                if (mode_ == Mode::Above || mode_ == Mode::Under) {
+                    stage_ = Stage::Reference;
+                    InputRequest request;
+                    request.kind = InputRequest::Kind::Entity;
+                    request.prompt = mode_ == Mode::Above ? "Select the object to draw above"
+                                                          : "Select the object to draw under";
+                    return StepResult::ask(request);
+                }
+                return apply(Handle{}, context);
+            }
+            case Stage::Reference:
+            default:
+                if (input.kind != InputValue::Kind::Entity) {
+                    return StepResult::cancelled();
+                }
+                return apply(input.entity, context);
+        }
+    }
+
+private:
+    enum class Stage : std::uint8_t { Select, Mode, Reference };
+    enum class Mode : std::uint8_t { Front, Back, Above, Under };
+
+    [[nodiscard]] StepResult askMode() {
+        stage_ = Stage::Mode;
+        InputRequest request;
+        request.kind = InputRequest::Kind::Keyword;
+        request.prompt = "Enter object ordering option [Above/Under/Front/Back]";
+        request.defaultText = "Back";
+        request.allowEmpty = true;
+        request.keywords = {CommandKeyword{"Above", "A", "Just over one other object"},
+                            CommandKeyword{"Under", "U", "Just beneath one other object"},
+                            CommandKeyword{"Front", "F", "Over everything"},
+                            CommandKeyword{"Back", "B", "Under everything"}};
+        return StepResult::ask(request);
+    }
+
+    [[nodiscard]] StepResult apply(Handle reference, CommandContext& context) {
+        Database& db = context.db();
+        // The space the selection lives in: every selected object's owner has
+        // to be the same one, or "in front" means nothing.
+        Handle spaceHandle;
+        std::vector<Handle> moving;
+        for (const Handle handle : selection_) {
+            const Entity* entity = db.getEntity(handle);
+            if (entity == nullptr || entity->erased || handle == reference) {
+                continue;
+            }
+            if (spaceHandle.isNull()) {
+                spaceHandle = entity->ownerHandle;
+            } else if (entity->ownerHandle != spaceHandle) {
+                return StepResult::failed("The objects are not all in the same space.");
+            }
+            moving.push_back(handle);
+        }
+        auto* space = db.get<BlockTableRecord>(spaceHandle);
+        if (space == nullptr || moving.empty()) {
+            return StepResult::failed("Nothing to reorder.");
+        }
+        if (!reference.isNull()) {
+            const Entity* other = db.getEntity(reference);
+            if (other == nullptr || other->ownerHandle != spaceHandle) {
+                return StepResult::failed("The reference object is not in the same space.");
+            }
+        }
+
+        // Keep the moved objects in the order they already had among
+        // themselves; only their place against the rest changes.
+        std::vector<Handle> kept;
+        std::vector<Handle> picked;
+        for (const Handle handle : space->entityHandles) {
+            if (std::find(moving.begin(), moving.end(), handle) != moving.end()) {
+                picked.push_back(handle);
+            } else {
+                kept.push_back(handle);
+            }
+        }
+        std::vector<Handle> order;
+        switch (mode_) {
+            case Mode::Front:
+                order = kept;
+                order.insert(order.end(), picked.begin(), picked.end());
+                break;
+            case Mode::Back:
+                order = picked;
+                order.insert(order.end(), kept.begin(), kept.end());
+                break;
+            case Mode::Above:
+            case Mode::Under:
+                for (const Handle handle : kept) {
+                    if (handle == reference && mode_ == Mode::Under) {
+                        order.insert(order.end(), picked.begin(), picked.end());
+                    }
+                    order.push_back(handle);
+                    if (handle == reference && mode_ == Mode::Above) {
+                        order.insert(order.end(), picked.begin(), picked.end());
+                    }
+                }
+                break;
+        }
+        BlockTableRecord& writable = context.transaction().openForWrite(*space);
+        writable.entityHandles = std::move(order);
+        db.notifyModified(writable.handle);
+        const char* where = mode_ == Mode::Front   ? "to the front"
+                            : mode_ == Mode::Back  ? "to the back"
+                            : mode_ == Mode::Above ? "above the reference"
+                                                   : "under the reference";
+        return StepResult::done(std::to_string(picked.size()) + " object(s) moved " + where);
+    }
+
+    Stage stage_ = Stage::Select;
+    Mode mode_ = Mode::Back;
+    std::vector<Handle> selection_;
+};
+
 [[nodiscard]] CommandDefinition makeDefinition(std::string id, std::string name,
                                                std::vector<std::string> aliases,
                                                std::string title, std::string description,
@@ -1610,6 +1779,10 @@ std::vector<CommandDefinition> modifyCommands() {
     commands.push_back(makeDefinition("cad.modify.move", "MOVE", {"M"}, "Move",
                                       "Move objects by a displacement",
                                       [] { return std::make_unique<MoveCommand>(); }));
+    commands.push_back(makeDefinition("cad.modify.draworder", "DRAWORDER", {"DR"}, "Draw Order",
+                                      "Bring objects to the front, send them back, or put "
+                                      "them just above or under another",
+                                      [] { return std::make_unique<DrawOrderCommand>(); }));
     commands.push_back(makeDefinition("cad.modify.copy", "COPY", {"CO", "CP"}, "Copy",
                                       "Duplicate objects at a displacement",
                                       [] { return std::make_unique<CopyCommand>(); }));

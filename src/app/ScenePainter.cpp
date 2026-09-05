@@ -46,7 +46,8 @@ void paintImage(QPainter& painter, const render::SceneImage& image,
             : options.images->image(QString::fromStdString(image.path),
                                     static_cast<int>(std::ceil(widthPixels)),
                                     static_cast<int>(std::ceil(heightPixels)),
-                                    ImageCache::Adjustment{image.brightness, image.contrast});
+                                    ImageCache::Adjustment{image.brightness, image.contrast},
+                                    image.page);
 
     if (decoded == nullptr || decoded->isNull()) {
         // A file that resolved but would not decode. The scene had no way to

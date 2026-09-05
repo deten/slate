@@ -15,6 +15,7 @@
 #include "LayerRibbon.hpp"
 #include "PropertiesPanel.hpp"
 #include "RibbonBar.hpp"
+#include "ViewCommands.hpp"
 #include "cad/io/OdaFileConverter.hpp"
 #include "cad/io/RecoveryStore.hpp"
 
@@ -277,6 +278,8 @@ private Q_SLOTS:
     /// and load its contents. Returns the problem, or empty and the handle.
     [[nodiscard]] std::string attachExternalReference(const std::string& path, bool overlay,
                                                       Handle* block);
+    /// What the attach commands need from the file layer.
+    [[nodiscard]] AttachHooks attachHooks();
     void onSelectionChanged();
     void onCommandStateChanged();
     void onUndo();

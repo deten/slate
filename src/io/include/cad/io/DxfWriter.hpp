@@ -2,6 +2,7 @@
 
 #include <filesystem>
 #include <functional>
+#include <span>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -39,6 +40,11 @@ public:
     /// features this application does not implement survives an
     /// open-edit-save cycle intact instead of being silently stripped.
     void preserved(const DbObject& object);
+
+    /// The same, with extra groups appended to the object's own before its
+    /// embedded object and XData: how a dictionary read from the file gains
+    /// an entry for something made in this session.
+    void preserved(const DbObject& object, std::span<const UnknownGroup> extra);
 
     /// A record's handle followed by its `102 {...}` application groups.
     ///

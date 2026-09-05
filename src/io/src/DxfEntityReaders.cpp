@@ -779,13 +779,26 @@ EntityReaderRegistry EntityReaderRegistry::standard() {
     // The three underlay types differ only in which kind of document they show,
     // so they share a reader rather than repeating it three times with one
     // constant changed.
+    // Two names for the same thing. Other CAD software writes an underlay as
+    // PDFUNDERLAY; the converter that turns its DWG into text writes
+    // PDFREFERENCE. A drawing that reaches here from a DWG has the second,
+    // and reading only the first lost every PDF underlay on open.
     registry.registerReader("PDFUNDERLAY", [](const DxfRecord& record, ReadContext&) {
+        return readUnderlay(record, UnderlayKind::Pdf);
+    });
+    registry.registerReader("PDFREFERENCE", [](const DxfRecord& record, ReadContext&) {
         return readUnderlay(record, UnderlayKind::Pdf);
     });
     registry.registerReader("DWFUNDERLAY", [](const DxfRecord& record, ReadContext&) {
         return readUnderlay(record, UnderlayKind::Dwf);
     });
+    registry.registerReader("DWFREFERENCE", [](const DxfRecord& record, ReadContext&) {
+        return readUnderlay(record, UnderlayKind::Dwf);
+    });
     registry.registerReader("DGNUNDERLAY", [](const DxfRecord& record, ReadContext&) {
+        return readUnderlay(record, UnderlayKind::Dgn);
+    });
+    registry.registerReader("DGNREFERENCE", [](const DxfRecord& record, ReadContext&) {
         return readUnderlay(record, UnderlayKind::Dgn);
     });
     return registry;

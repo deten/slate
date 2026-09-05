@@ -51,6 +51,8 @@
 
 #include "Branding.hpp"
 #include "CanvasWidget.hpp"
+#include "PdfPages.hpp"
+#include <QImageReader>
 #include "CommandLine.hpp"
 #include "RibbonIcons.hpp"
 #include "Theme.hpp"
@@ -872,9 +874,7 @@ std::unique_ptr<Document> MainWindow::makeDocument() {
                 [this](const std::string& instruction) {
                     runAgent(QString::fromStdString(instruction));
                 },
-                [this](const std::string& path, bool overlay, Handle* block) {
-                    return attachExternalReference(path, overlay, block);
-                });
+                attachHooks());
             commands.insert(commands.end(), std::make_move_iterator(view.begin()),
                             std::make_move_iterator(view.end()));
             return commands;
@@ -2417,6 +2417,11 @@ void MainWindow::openFile(const QString& path) {
             reportTranslatorIfUnavailable();
         }
         io::DrawingLoadResult loaded = io::loadDrawingWithReferences(filePath, options);
+        // PDF pages have a size only their file knows; read it now so the
+        // underlays have an outline before the drawing is first drawn.
+        if (loaded.database != nullptr) {
+            fillUnderlayPageSizes(*loaded.database);
+        }
 
         std::unique_ptr<Document> opened = makeDocument();
         opened->reset(std::move(loaded.database));
@@ -3511,6 +3516,48 @@ void MainWindow::onPurge() {
     refreshLayerPanel();
 }
 
+AttachHooks MainWindow::attachHooks() {
+    AttachHooks hooks;
+    hooks.xref = [this](const std::string& path, bool overlay, Handle* block) {
+        return attachExternalReference(path, overlay, block);
+    };
+    hooks.pdfPages = [](const std::string& path, int* pages) -> std::string {
+        const QString file = QString::fromStdString(path);
+        if (!QFileInfo::exists(file)) {
+            return "There is no file at " + path + ".";
+        }
+        *pages = pdfPageCount(file);
+        if (*pages <= 0) {
+            return "The PDF could not be opened: " + path;
+        }
+        return {};
+    };
+    hooks.pdfPage = [](const std::string& path, int page, double* width,
+                       double* height) -> std::string {
+        const std::optional<QSizeF> size = pdfPageSizePoints(QString::fromStdString(path), page);
+        if (!size) {
+            return "The PDF has no page " + std::to_string(page) + ".";
+        }
+        *width = size->width();
+        *height = size->height();
+        return {};
+    };
+    hooks.imageSize = [](const std::string& path, int* width, int* height) -> std::string {
+        const QString file = QString::fromStdString(path);
+        if (!QFileInfo::exists(file)) {
+            return "There is no file at " + path + ".";
+        }
+        const QSize size = QImageReader{file}.size();
+        if (!size.isValid() || size.isEmpty()) {
+            return "The image could not be read: " + path;
+        }
+        *width = size.width();
+        *height = size.height();
+        return {};
+    };
+    return hooks;
+}
+
 std::string MainWindow::attachExternalReference(const std::string& path, bool overlay,
                                                 Handle* block) {
     if (document_ == nullptr) {
@@ -3582,6 +3629,10 @@ void MainWindow::onReferenceManager() {
     connect(&dialog, &ReferenceManagerDialog::referencesChanged, this, [this] {
         // A repathed image has to be decoded again, and the canvas has to be
         // told: the cache is keyed on the path, and the old one is still in it.
+        // A PDF found for the first time also gets its page size now.
+        if (fillUnderlayPageSizes(document_->db()) > 0) {
+            document_->reindex();
+        }
         canvas_->clearImageCache();
         canvas_->update();
         log(tr("Reference path updated."));
