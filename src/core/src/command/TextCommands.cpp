@@ -341,24 +341,25 @@ public:
             }
             firstCorner_ = input.point;
             hasFirstCorner_ = true;
-
-            InputRequest request;
-            request.kind = InputRequest::Kind::Point;
-            request.prompt = "Specify opposite corner";
-            request.basePoint = firstCorner_;
-            return StepResult::ask(request);
+            return askOpposite();
         }
 
         if (!hasSecondCorner_) {
+            // The options that shape the paragraph before its box is drawn.
+            if (option_ != Option::None) {
+                takeOption(input);
+                // A width given stands in for the second corner.
+                return hasSecondCorner_ ? afterBox(context) : askOpposite();
+            }
+            if (input.kind == InputValue::Kind::Keyword) {
+                return askOption(input.text);
+            }
             if (input.kind != InputValue::Kind::Point) {
                 return StepResult::cancelled();
             }
             secondCorner_ = input.point;
             hasSecondCorner_ = true;
-            if (std::optional<StepResult> ask = beginHeight(context)) {
-                return *ask;
-            }
-            return askContents();
+            return afterBox(context);
         }
 
         if (!hasHeight()) {
@@ -370,23 +371,177 @@ public:
             return StepResult::cancelled("No text entered");
         }
 
-        const Box3 box = Box3::fromCorners(firstCorner_, secondCorner_);
-        // Attached at the top-left and wrapped to the box width, which is what
-        // dragging a rectangle left-to-right means everywhere else in CAD.
-        auto entity = std::make_unique<MTextEntity>(Vec3{box.min.x, box.max.y, box.min.z},
-                                                    input.text, height());
-        entity->width = box.width();
-        entity->attachment = MTextAttachment::TopLeft;
+        // Attached at the top-left of the box and wrapped to its width, which
+        // is what dragging a rectangle left-to-right means everywhere else in
+        // CAD, unless Justify said which point of the box the text hangs from.
+        // A Width given instead of a second corner hangs the text from the
+        // first point itself.
+        Vec3 anchor = firstCorner_;
+        double width = width_;
+        if (!hasWidth_) {
+            const Box3 box = Box3::fromCorners(firstCorner_, secondCorner_);
+            width = box.width();
+            anchor = anchorOf(box);
+        }
+        auto entity = std::make_unique<MTextEntity>(anchor, input.text, height());
+        entity->width = width;
+        entity->attachment = attachment_;
+        entity->rotation = rotation_;
         entity->styleHandle = styleHandle();
         context.transaction().addToCurrentSpace(std::move(entity));
         return StepResult::done();
     }
 
 private:
+    enum class Option : std::uint8_t { None, Height, Justify, Rotation, Width };
+
+    [[nodiscard]] StepResult askOpposite() const {
+        InputRequest request;
+        request.kind = InputRequest::Kind::Point;
+        request.prompt = "Specify opposite corner or [Height/Justify/Rotation/Width]";
+        request.basePoint = firstCorner_;
+        request.keywords = {CommandKeyword{"Height", "H", "Text height"},
+                            CommandKeyword{"Justify", "J", "Which point of the box the text hangs from"},
+                            CommandKeyword{"Rotation", "R", "Angle of the paragraph"},
+                            CommandKeyword{"Width", "W", "Wrap width, instead of a second corner"}};
+        return StepResult::ask(request);
+    }
+
+    [[nodiscard]] StepResult askOption(const std::string& keyword) {
+        InputRequest request;
+        if (matchesKeyword(keyword, 'H')) {
+            option_ = Option::Height;
+            request.kind = InputRequest::Kind::Number;
+            request.prompt = "Specify height";
+            request.defaultNumber = kDefaultTextHeight;
+            request.minimum = 1e-9;
+        } else if (matchesKeyword(keyword, 'J')) {
+            option_ = Option::Justify;
+            request.kind = InputRequest::Kind::Keyword;
+            request.prompt = "Enter justification [TL/TC/TR/ML/MC/MR/BL/BC/BR]";
+            request.defaultText = "TL";
+            request.allowEmpty = true;
+            for (const auto& [name, attachment] : kAttachments) {
+                request.keywords.push_back(CommandKeyword{name, name, ""});
+            }
+        } else if (matchesKeyword(keyword, 'R')) {
+            option_ = Option::Rotation;
+            request.kind = InputRequest::Kind::Angle;
+            request.prompt = "Specify rotation angle";
+            request.defaultNumber = 0.0;
+        } else if (matchesKeyword(keyword, 'W')) {
+            option_ = Option::Width;
+            request.kind = InputRequest::Kind::Number;
+            request.prompt = "Specify width";
+            request.minimum = 0.0;
+        } else {
+            return askOpposite();
+        }
+        return StepResult::ask(request);
+    }
+
+    void takeOption(const InputValue& input) {
+        const Option option = option_;
+        option_ = Option::None;
+        switch (option) {
+            case Option::Height:
+                if (input.kind == InputValue::Kind::Number && input.number > 0.0) {
+                    takeHeight(input);
+                }
+                break;
+            case Option::Justify:
+                if (input.kind == InputValue::Kind::Keyword || input.kind == InputValue::Kind::Text) {
+                    std::string upper;
+                    for (const char c : input.text) {
+                        upper.push_back(static_cast<char>(std::toupper(static_cast<unsigned char>(c))));
+                    }
+                    for (const auto& [name, attachment] : kAttachments) {
+                        if (upper == name) {
+                            attachment_ = attachment;
+                        }
+                    }
+                }
+                break;
+            case Option::Rotation:
+                if (input.kind == InputValue::Kind::Number) {
+                    rotation_ = input.number;
+                }
+                break;
+            case Option::Width:
+                if (input.kind == InputValue::Kind::Number && input.number >= 0.0) {
+                    width_ = input.number;
+                    hasWidth_ = true;
+                    // A width stands in for the second corner.
+                    hasSecondCorner_ = true;
+                }
+                break;
+            case Option::None:
+                break;
+        }
+    }
+
+    [[nodiscard]] StepResult afterBox(CommandContext& context) {
+        if (hasHeight()) {
+            return askContents();
+        }
+        if (std::optional<StepResult> ask = beginHeight(context)) {
+            return *ask;
+        }
+        return askContents();
+    }
+
+    /// The point of the box the paragraph hangs from, for its attachment.
+    [[nodiscard]] Vec3 anchorOf(const Box3& box) const {
+        double x = box.min.x;
+        double y = box.max.y;
+        switch (attachment_) {
+            case MTextAttachment::TopCenter:
+            case MTextAttachment::MiddleCenter:
+            case MTextAttachment::BottomCenter:
+                x = box.center().x;
+                break;
+            case MTextAttachment::TopRight:
+            case MTextAttachment::MiddleRight:
+            case MTextAttachment::BottomRight:
+                x = box.max.x;
+                break;
+            default:
+                break;
+        }
+        switch (attachment_) {
+            case MTextAttachment::MiddleLeft:
+            case MTextAttachment::MiddleCenter:
+            case MTextAttachment::MiddleRight:
+                y = box.center().y;
+                break;
+            case MTextAttachment::BottomLeft:
+            case MTextAttachment::BottomCenter:
+            case MTextAttachment::BottomRight:
+                y = box.min.y;
+                break;
+            default:
+                break;
+        }
+        return Vec3{x, y, box.min.z};
+    }
+
+    static constexpr std::pair<const char*, MTextAttachment> kAttachments[] = {
+        {"TL", MTextAttachment::TopLeft},      {"TC", MTextAttachment::TopCenter},
+        {"TR", MTextAttachment::TopRight},     {"ML", MTextAttachment::MiddleLeft},
+        {"MC", MTextAttachment::MiddleCenter}, {"MR", MTextAttachment::MiddleRight},
+        {"BL", MTextAttachment::BottomLeft},   {"BC", MTextAttachment::BottomCenter},
+        {"BR", MTextAttachment::BottomRight},
+    };
+
     Vec3 firstCorner_;
     Vec3 secondCorner_;
     bool hasFirstCorner_ = false;
     bool hasSecondCorner_ = false;
+    Option option_ = Option::None;
+    MTextAttachment attachment_ = MTextAttachment::TopLeft;
+    double rotation_ = 0.0;
+    double width_ = 0.0;
+    bool hasWidth_ = false;
 };
 
 // ------------------------------------------------------------------ editing

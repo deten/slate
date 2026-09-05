@@ -1212,6 +1212,49 @@ TEST_SUITE("Text commands") {
         CHECK_POINT(texts[0]->position, Vec3(20, 90));
     }
 
+    TEST_CASE("MTEXT Justify hangs the paragraph from the named point of its box") {
+        Harness h;
+        h.executor.execute("MTEXT");
+        h.executor.supply(point(0, 0));
+        CHECK(h.executor.currentRequest()->prompt.find("[Height/Justify/Rotation/Width]") !=
+              std::string::npos);
+        h.executor.supply(InputValue::makeKeyword("J"));
+        h.executor.supply(InputValue::makeKeyword("BR"));
+        h.executor.supply(InputValue::makeKeyword("R"));
+        h.executor.supply(InputValue::makeNumber(0.25));
+        h.executor.supply(point(100, 40));
+        h.executor.supply(InputValue::makeNumber(5.0));
+        h.executor.supply(InputValue::makeText("NOTE"));
+
+        const auto texts = h.ofType<MTextEntity>();
+        REQUIRE(texts.size() == 1);
+        CHECK(texts[0]->attachment == MTextAttachment::BottomRight);
+        CHECK_POINT(texts[0]->position, Vec3(100, 0));
+        CHECK(texts[0]->width == doctest::Approx(100.0));
+        CHECK(texts[0]->rotation == doctest::Approx(0.25));
+    }
+
+    TEST_CASE("MTEXT Width and Height stand in for the second corner and the height prompt") {
+        Harness h;
+        h.executor.execute("MTEXT");
+        h.executor.supply(point(10, 20));
+        h.executor.supply(InputValue::makeKeyword("H"));
+        h.executor.supply(InputValue::makeNumber(7.0));
+        h.executor.supply(InputValue::makeKeyword("W"));
+        h.executor.supply(InputValue::makeNumber(80.0));
+        // Straight to the words: the box is known and so is the height.
+        CHECK(h.executor.currentRequest()->kind == InputRequest::Kind::Text);
+        CHECK(h.executor.supply(InputValue::makeText("WIDE")).status ==
+              CommandOutcome::Status::Completed);
+
+        const auto texts = h.ofType<MTextEntity>();
+        REQUIRE(texts.size() == 1);
+        CHECK_POINT(texts[0]->position, Vec3(10, 20));
+        CHECK(texts[0]->width == doctest::Approx(80.0));
+        CHECK(texts[0]->height == doctest::Approx(7.0));
+        CHECK(texts[0]->attachment == MTextAttachment::TopLeft);
+    }
+
     TEST_CASE("MTEXT with no text entered creates nothing") {
         Harness h;
         h.executor.execute("MTEXT");
