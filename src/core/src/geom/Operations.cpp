@@ -239,8 +239,11 @@ CurvePtr offsetCurve(const Curve& curve, double distance, const Tolerance& tol) 
 
     if (const auto* arc = dynamic_cast<const Arc*>(&curve)) {
         // Offsetting to the left of a counter-clockwise arc means moving
-        // *inward*, toward the centre, because the centre is on the left.
-        const double newRadius = arc->radius - distance;
+        // *inward*, toward the centre, because the centre is on the left. An
+        // arc whose normal points down runs clockwise as seen from above, and
+        // its left is outward.
+        const double inward = arc->normal.z < 0.0 ? -distance : distance;
+        const double newRadius = arc->radius - inward;
         if (newRadius <= tol.point) {
             return nullptr;
         }

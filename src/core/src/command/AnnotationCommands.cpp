@@ -501,9 +501,18 @@ constexpr double kChainTolerance = 1e-7;
     }
     if (const auto* arc = dynamic_cast<const Arc*>(&curve)) {
         // The angles describe the shape; the flag says which way the loop runs
-        // through it.
-        return HatchEdge::arc(arc->center, arc->radius, arc->startAngle, arc->endAngle,
-                              !reversed);
+        // through it. A hatch edge measures its angles about +Z, so an arc
+        // whose normal points down -- a reversed arc -- is put back into that
+        // frame, and the direction flag turned over with it.
+        double start = arc->startAngle;
+        double end = arc->endAngle;
+        bool counterClockwise = !reversed;
+        if (arc->normal.z < 0.0) {
+            start = kPi - arc->endAngle;
+            end = kPi - arc->startAngle;
+            counterClockwise = !counterClockwise;
+        }
+        return HatchEdge::arc(arc->center, arc->radius, start, end, counterClockwise);
     }
     if (const auto* ellipse = dynamic_cast<const EllipseArc*>(&curve)) {
         HatchEdge edge;

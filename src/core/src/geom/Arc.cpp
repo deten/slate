@@ -243,7 +243,14 @@ CurvePtr Arc::reversed() const {
     if (full_) {
         return std::make_unique<Arc>(center, radius, startAngle, endAngle, -normal, true);
     }
-    return std::make_unique<Arc>(center, radius, endAngle, startAngle, normal);
+    // The same points walked the other way. An arc always sweeps
+    // counter-clockwise about its normal, so the reverse walk is the
+    // counter-clockwise arc about the opposite normal. Flipping the normal
+    // negates the frame's x axis and keeps its y axis, so an angle θ in this
+    // frame is π - θ in the flipped one. Swapping the angles in the same
+    // frame would give the *other* arc around the circle: the wrong shape,
+    // not the wrong direction.
+    return std::make_unique<Arc>(center, radius, kPi - endAngle, kPi - startAngle, -normal);
 }
 
 int Arc::segmentCount(const TessellationOptions& options) const {

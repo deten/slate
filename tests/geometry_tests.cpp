@@ -561,3 +561,29 @@ TEST_CASE("an ellipse whose ratio exceeds one is the same ellipse with its axes 
     CHECK(tall.closestPoint(Vec3{0.0, 20.0, 0.0}).distance == doctest::Approx(0.0).epsilon(1e-6));
     CHECK(tall.closestPoint(Vec3{20.0, 0.0, 0.0}).distance > 5.0);
 }
+
+TEST_CASE("a reversed arc is the same arc walked backwards, not the other arc") {
+    // A quarter circle in the first quadrant. Reversed, it must start where
+    // this one ends, pass through the same midpoint, and stay in the first
+    // quadrant -- the complementary three-quarter arc would dip below.
+    const Arc quarter{Vec3{0.0, 0.0, 0.0}, 10.0, 0.0, kPi / 2.0};
+    const CurvePtr back = quarter.reversed();
+    REQUIRE(back != nullptr);
+    CHECK(back->startPoint().equals(quarter.endPoint(), Tolerance{1e-9}));
+    CHECK(back->endPoint().equals(quarter.startPoint(), Tolerance{1e-9}));
+    CHECK(back->midPoint().equals(quarter.midPoint(), Tolerance{1e-9}));
+    CHECK(back->length() == doctest::Approx(quarter.length()));
+    CHECK(back->bounds().min.y == doctest::Approx(0.0).epsilon(1e-9));
+    CHECK(back->bounds().min.x == doctest::Approx(0.0).epsilon(1e-9));
+
+    // Reversing twice gives the original back.
+    const CurvePtr again = back->reversed();
+    CHECK(again->startPoint().equals(quarter.startPoint(), Tolerance{1e-9}));
+    CHECK(again->midPoint().equals(quarter.midPoint(), Tolerance{1e-9}));
+
+    // As a polyline vertex the reversed arc bulges the other way.
+    const auto* reversedArc = dynamic_cast<const Arc*>(back.get());
+    REQUIRE(reversedArc != nullptr);
+    CHECK(reversedArc->bulge() == doctest::Approx(-quarter.bulge()));
+    CHECK(quarter.bulge() > 0.0);
+}

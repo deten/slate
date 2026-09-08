@@ -55,7 +55,13 @@ public:
 
     /// The bulge factor for this arc traversed start to end, for writing back
     /// out to a polyline.
-    [[nodiscard]] double bulge() const { return std::tan(sweep_ / 4.0); }
+    [[nodiscard]] double bulge() const {
+        // Signed for a polyline in the world XY plane: an arc whose normal
+        // points down is walked clockwise as seen from above, which is what
+        // a negative bulge means. Reversing an arc flips its normal, so this
+        // is how a reversed arc keeps its shape when it becomes a vertex.
+        return normal.z < 0.0 ? -std::tan(sweep_ / 4.0) : std::tan(sweep_ / 4.0);
+    }
 
     /// Total counter-clockwise sweep in radians, in `(0, 2pi]`.
     [[nodiscard]] double sweep() const noexcept { return sweep_; }
