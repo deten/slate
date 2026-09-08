@@ -254,6 +254,31 @@ TEST_CASE("an entity in paper space says so with group 67") {
     CHECK(count == 1);
 }
 
+TEST_CASE("a sheet block spelled in capitals still writes its contents as paper space") {
+    // A file from elsewhere named its sheet *PAPER_SPACE. Matched by exact
+    // spelling it counted as an ordinary block, its contents went inside the
+    // block definition, and other readers put them into model space.
+    auto db = Database::createEmpty();
+    db->ensureModelLayout();
+    BlockTableRecord* paper = db->findBlock(kPaperSpace);
+    REQUIRE(paper != nullptr);
+    paper->name = "*PAPER_SPACE";
+    auto line = std::make_unique<LineEntity>(Vec3{0.0, 0.0, 0.0}, Vec3{10.0, 0.0, 0.0});
+    line->layerHandle = db->defaultLayer().handle;
+    db->addEntity(std::move(line), *paper);
+
+    std::string text = io::writeDxf(*db);
+    std::erase(text, '\r');
+    const std::size_t entities = text.find("\nENTITIES\n");
+    const std::size_t lineAt = text.find("\nLINE\n");
+    REQUIRE(entities != std::string::npos);
+    REQUIRE(lineAt != std::string::npos);
+    // In the ENTITIES section, after the BLOCKS section, flagged as paper.
+    CHECK(lineAt > entities);
+    const std::string record = text.substr(lineAt, text.find("\n  0\n", lineAt + 1) - lineAt);
+    CHECK((record.find("\n 67\n1\n") != std::string::npos || record.find("\n67\n1\n") != std::string::npos));
+}
+
 TEST_CASE("a boundary names the associative hatch it feeds") {
     // other CAD software keeps a hatch's association only when the boundary entity
     // carries a reactor back to it; without one, every associative hatch

@@ -1,5 +1,7 @@
 #include "test_helpers.hpp"
 
+#include <cmath>
+
 #include "cad/geom/Arc.hpp"
 #include "cad/geom/EllipseArc.hpp"
 #include "cad/geom/Intersect.hpp"
@@ -249,9 +251,10 @@ TEST_SUITE("EllipseArc") {
         CHECK(b.max.y == doctest::Approx(4.0));
     }
 
-    TEST_CASE("rejects an out-of-range ratio") {
+    TEST_CASE("rejects a ratio that is not positive, and takes one above one") {
         CHECK_THROWS_AS((void)EllipseArc(Vec3::zero(), Vec3{1, 0}, 0.0), std::invalid_argument);
-        CHECK_THROWS_AS((void)EllipseArc(Vec3::zero(), Vec3{1, 0}, 2.0), std::invalid_argument);
+        CHECK_THROWS_AS((void)EllipseArc(Vec3::zero(), Vec3{1, 0}, -1.0), std::invalid_argument);
+        CHECK_NOTHROW((void)EllipseArc(Vec3::zero(), Vec3{1, 0}, 2.0));
     }
 }
 
@@ -539,4 +542,22 @@ TEST_SUITE("Intersections") {
         CHECK(hits[0].point.x == doctest::Approx(3.0));
         CHECK(hits[1].point.x == doctest::Approx(7.0));
     }
+}
+
+TEST_CASE("an ellipse whose ratio exceeds one is the same ellipse with its axes the other way round") {
+    // Files carry such ratios: a hatch edge at 1.0001 from rounding, or a
+    // genuine 2. Refusing them threw away whole drawings.
+    const EllipseArc nearly{Vec3{0.0, 0.0, 0.0}, Vec3{10.0, 0.0, 0.0}, 1.0001, 0.0, 0.0};
+    CHECK(nearly.ratio == doctest::Approx(1.0).epsilon(1e-3));
+    CHECK(nearly.majorAxis.length() == doctest::Approx(10.0).epsilon(1e-3));
+
+    const EllipseArc tall{Vec3{0.0, 0.0, 0.0}, Vec3{10.0, 0.0, 0.0}, 2.0, 0.0, 0.0};
+    CHECK(tall.ratio == doctest::Approx(0.5));
+    CHECK(tall.majorAxis.x == doctest::Approx(0.0));
+    CHECK(std::abs(tall.majorAxis.y) == doctest::Approx(20.0));
+    // The rim still passes through the points the file describes: 10 along
+    // the stated axis and 20 along the other.
+    CHECK(tall.closestPoint(Vec3{10.0, 0.0, 0.0}).distance == doctest::Approx(0.0).epsilon(1e-6));
+    CHECK(tall.closestPoint(Vec3{0.0, 20.0, 0.0}).distance == doctest::Approx(0.0).epsilon(1e-6));
+    CHECK(tall.closestPoint(Vec3{20.0, 0.0, 0.0}).distance > 5.0);
 }

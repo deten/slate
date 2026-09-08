@@ -1476,7 +1476,11 @@ void DxfWriter::writeBlocks(const Database& db, DxfBuilder& out) {
         // sheets emptied and their title blocks and viewports piled into model
         // space. The round trip through this application alone could never see
         // it -- only writing a DWG and reading it back could.
-        const bool headerOnly = block->isModelSpace() || block->name == kPaperSpace;
+        // By normalised name: a file may spell the sheet block in capitals,
+        // and treating that as an ordinary block wrote every sheet's contents
+        // inside it, where other readers take them for model space.
+        const bool headerOnly = block->isModelSpace() ||
+                                normalizeSymbolName(block->name) == normalizeSymbolName(kPaperSpace);
 
         out.pair(0, "BLOCK");
         // Code 5 is the BLOCK entity's own handle and code 330 is the
@@ -2060,7 +2064,7 @@ void DxfWriter::writeCommonProperties(const Entity& entity, const Database& db,
     // goes by the code, as other CAD software's own DXF output invites, would put every
     // sheet's title block and viewports into model space without it.
     if (const auto* owner = db.get<BlockTableRecord>(entity.ownerHandle);
-        owner != nullptr && owner->name.compare(0, 12, "*Paper_Space") == 0) {
+        owner != nullptr && normalizeSymbolName(owner->name).compare(0, 12, "*PAPER_SPACE") == 0) {
         out.pair(67, 1);
     }
     out.pair(8, symbolName(db, entity.layerHandle, "0"));

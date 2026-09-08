@@ -56,11 +56,24 @@ struct ConjugateAxes {
 EllipseArc::EllipseArc(const Vec3& centerPoint, const Vec3& major, double ratioValue,
                        double start, double end, const Vec3& extrusion)
     : center(centerPoint), majorAxis(major), normal(extrusion) {
-    if (!(ratioValue > 0.0) || ratioValue > 1.0 + 1e-12) {
-        throw std::invalid_argument("Ellipse ratio must lie in (0, 1]");
+    if (!(ratioValue > 0.0)) {
+        throw std::invalid_argument("Ellipse ratio must be positive");
     }
     if (major.isZero()) {
         throw std::invalid_argument("Ellipse major axis must be non-zero");
+    }
+    // A ratio above one names the shorter axis as the major one. Files do
+    // carry them -- a hatch edge at 1.0001 from rounding, or a genuine 2 --
+    // and the ellipse is the same ellipse either way, so it is taken as the
+    // one with the axes the other way round rather than refused. The
+    // parameters move with the axis: a quarter turn earlier.
+    if (ratioValue > 1.0 + 1e-12) {
+        const Vec3 minorDirection =
+            extrusion.cross(major).tryNormalize().value_or(Vec3::unitY());
+        majorAxis = minorDirection * (major.length() * ratioValue);
+        ratioValue = 1.0 / ratioValue;
+        start -= kPi / 2.0;
+        end -= kPi / 2.0;
     }
     ratio = std::min(ratioValue, 1.0);
 
@@ -71,8 +84,9 @@ EllipseArc::EllipseArc(const Vec3& centerPoint, const Vec3& major, double ratioV
     sweep_ = full_ ? kTau : rawSweep;
     endParam = normalizeAngle(startParam + sweep_);
 
-    const Vec3 minorDirection = extrusion.cross(major).tryNormalize().value_or(Vec3::unitY());
-    minorAxis_ = minorDirection * (major.length() * ratio);
+    const Vec3 minorDirection =
+        extrusion.cross(majorAxis).tryNormalize().value_or(Vec3::unitY());
+    minorAxis_ = minorDirection * (majorAxis.length() * ratio);
 }
 
 EllipseArc EllipseArc::fromArc(const Arc& arc) {
