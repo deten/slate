@@ -72,6 +72,11 @@ struct AgentDialogue {
     AgentAnswerer answer;
     /// How many times the model may ask Slate for facts before it must answer.
     int factRounds = 4;
+    /// Answers for the questions the drawing alone cannot: about the
+    /// project and its other sheets, which live in files the core does not
+    /// open. Given a query, returns the answer, or nothing to let the
+    /// drawing's own answerer have it.
+    std::function<std::optional<std::string>(const AgentQuery&)> beyondTheDrawing;
     /// Everything said either way after the first request, for the history.
     std::vector<std::string>* transcript = nullptr;
 };

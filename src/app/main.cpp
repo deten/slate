@@ -79,6 +79,9 @@ int main(int argc, char* argv[]) {
         "agent-reference", "Learn house standards from the drawings in this folder.", "folder"};
     const QCommandLineOption agentContextOption{
         "agent-context", "Print what the assistant is told about the drawing, without asking it."};
+    const QCommandLineOption projectOption{
+        "project", "Use this project file for the session, whatever sits beside the drawing.",
+        "file"};
     const QCommandLineOption panelOption{
         "panel", "Show a dock panel: layers, properties, history, references.", "name"};
     const QCommandLineOption layoutOption{
@@ -127,6 +130,7 @@ int main(int argc, char* argv[]) {
     parser.addOption(agentReplyOption);
     parser.addOption(agentReferenceOption);
     parser.addOption(agentContextOption);
+    parser.addOption(projectOption);
     parser.addOption(panelOption);
     parser.addOption(layoutOption);
     parser.addOption(menuPickOption);
@@ -159,7 +163,7 @@ int main(int argc, char* argv[]) {
                           parser.isSet(layoutOption) || parser.isSet(panelOption) ||
                           parser.isSet(agentOption) || parser.isSet(agentReplyOption) ||
                           parser.isSet(agentReferenceOption) ||
-                          parser.isSet(agentContextOption) ||
+                          parser.isSet(agentContextOption) || parser.isSet(projectOption) ||
                           parser.isSet(dumpMenusOption) ||
                           parser.isSet(sizeOption) || parser.isSet(canvasOption);
     if (scripted || parser.isSet(noRecoveryOption)) {
@@ -238,7 +242,7 @@ int main(int argc, char* argv[]) {
                                     argument == "--layout" ||
                                     argument == "--panel" ||
                                     argument == "--agent" || argument == "--agent-reply" ||
-                                    argument == "--agent-reference" ||
+                                    argument == "--agent-reference" || argument == "--project" ||
                                     argument == "--double-click" || argument == "--right-hold" || argument == "--snap-menu" ||
                                     argument == "--type" || argument == "--key" ||
                                     argument == "--cycle" || argument == "--tab" ||
@@ -275,6 +279,8 @@ int main(int argc, char* argv[]) {
                 window.useCannedAgentReply(value);
             } else if (argument == "--agent-reference") {
                 window.useAgentReference(value);
+            } else if (argument == "--project") {
+                window.useProject(value);
             } else if (argument == "--agent") {
                 window.runAgent(value);
             } else if (argument == "--panel") {

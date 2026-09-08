@@ -35,6 +35,10 @@ qt_add_executable(cad_app WIN32
     HttpAgentProvider.cpp
     ReferenceLibrary.cpp
     ReferenceLibrary.hpp
+    ProjectIndex.cpp
+    ProjectIndex.hpp
+    ProjectDialog.cpp
+    ProjectDialog.hpp
     PdfPages.cpp
     PdfPages.hpp
     LayerOrdering.cpp

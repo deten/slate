@@ -32,6 +32,7 @@ add_executable(cad_tests
     agent_tests.cpp
     standards_tests.cpp
     drawing_reading_tests.cpp
+    project_tests.cpp
     boundary_trace_tests.cpp
     nurbs_tests.cpp
     tessellation_tests.cpp

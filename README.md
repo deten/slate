@@ -21,6 +21,7 @@ Run `build.ps1` in PowerShell. It needs Visual Studio 2022, CMake, Ninja and Qt 
 - `docs/ATTRIBUTES.md` - block attributes
 - `docs/REFERENCES.md` - other drawings, PDFs and pictures
 - `docs/AI-ASSISTANT.md` - the AI assistant and the reference folder
+- `docs/PROJECTS.md` - a set of sheets described beside its drawings
 - `docs/MACROS.md` - custom commands
 - `docs/PLUGINS.md` - the plugin API
 

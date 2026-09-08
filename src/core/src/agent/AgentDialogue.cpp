@@ -396,7 +396,8 @@ std::string answerAgentQuery(const Database& db, const DrawingReading& reading,
         return answerBlock(db, query.argument);
     }
     return "Unknown question \"" + query.source +
-           "\". Ask ROOM <name or number>, ROOMS, LAYER <name>, NEAR <x,y> [radius] or BLOCK <name>.\n";
+           "\". Ask ROOM <name or number>, ROOMS, LAYER <name>, NEAR <x,y> [radius], BLOCK <name>, "
+           "SHEET <number> or PROJECT.\n";
 }
 
 }  // namespace cad

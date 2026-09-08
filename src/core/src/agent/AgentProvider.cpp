@@ -373,7 +373,13 @@ AgentPlan requestAgentPlan(AgentProvider& provider, const std::string& instructi
             std::string answers;
             for (const AgentQuery& query : turn.queries) {
                 say("Asked: " + query.source);
-                answers += query.source + "\n" + answerAgentQuery(db, *reading, query) + "\n";
+                std::optional<std::string> beyond;
+                if (dialogue->beyondTheDrawing) {
+                    beyond = dialogue->beyondTheDrawing(query);
+                }
+                answers += query.source + "\n" +
+                           (beyond.has_value() ? *beyond : answerAgentQuery(db, *reading, query)) +
+                           "\n";
             }
             request.history.push_back(AgentTurn{true, reply.text});
             request.history.push_back(

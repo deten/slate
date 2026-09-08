@@ -8,6 +8,7 @@
 #include <QRegularExpression>
 
 #include "Document.hpp"
+#include "ProjectIndex.hpp"
 #include "cad/agent/AgentProvider.hpp"
 #include "cad/config/ConfigFile.hpp"
 
@@ -98,10 +99,35 @@ QString AgentService::standardsPreview(const QString& directory) {
 QString AgentService::context(Document& document, QStringList* log) {
     const std::vector<Handle> selection = document.selection();
     QString text = QString::fromStdString(describeDrawing(document.db(), selection));
+    const QString set = projectDigest(document, log);
+    if (!set.isEmpty()) {
+        text += QLatin1Char('\n');
+        text += set;
+    }
     const QString house = standards(log);
     if (!house.isEmpty()) {
         text += QLatin1Char('\n');
         text += house;
+    }
+    return text;
+}
+
+QString AgentService::projectDigest(Document& document, QStringList* log) {
+    if (project_ == nullptr || !project_->isOpen()) {
+        return {};
+    }
+    QStringList problems;
+    QString text = project_->digest(&problems);
+    if (const ProjectSheet* sheet = project_->sheetForFile(QString::fromStdString(document.filePath));
+        sheet != nullptr) {
+        text += QStringLiteral("The open drawing is sheet %1 %2.\n")
+                    .arg(QString::fromStdString(sheet->number),
+                         QString::fromStdString(sheet->title));
+    }
+    if (log != nullptr) {
+        for (const QString& problem : problems) {
+            *log << QObject::tr("  project: %1").arg(problem);
+        }
     }
     return text;
 }
@@ -123,7 +149,13 @@ AgentOutcome AgentService::propose(const QString& instruction, Document& documen
     outcome.log << QObject::tr("Asking %1...")
                        .arg(QString::fromStdString(provider->name()));
 
-    const std::string house = standards(&outcome.log).toStdString();
+    // The set goes in with the office's standards: what the other sheets
+    // hold is as much a convention as which layer a wall goes on.
+    std::string house = projectDigest(document, &outcome.log).toStdString();
+    const std::string conventions = standards(&outcome.log).toStdString();
+    if (!conventions.empty()) {
+        house += (house.empty() ? "" : "\n") + conventions;
+    }
     std::string error;
     const std::vector<Handle> selection = document.selection();
     // The back-and-forth: facts answered from the drawing, questions put to
@@ -132,6 +164,11 @@ AgentOutcome AgentService::propose(const QString& instruction, Document& documen
     std::vector<std::string> transcript;
     AgentDialogue dialogue;
     dialogue.answer = questions_;
+    if (project_ != nullptr) {
+        dialogue.beyondTheDrawing = [this](const AgentQuery& query) {
+            return project_->answer(query);
+        };
+    }
     dialogue.transcript = &transcript;
     outcome.plan = requestAgentPlan(*provider, instruction.toStdString(), document.db(),
                                     document.commands(), selection, &error, house, &dialogue);

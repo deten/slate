@@ -20,6 +20,7 @@ class DwgTranslator;
 namespace cad::app {
 
 class Document;
+class ProjectIndex;
 
 /// A provider that answers from a file instead of a network.
 ///
@@ -84,6 +85,10 @@ public:
     /// which is what a scripted run wants and what the console gets.
     void answerQuestionsWith(AgentAnswerer answerer) { questions_ = std::move(answerer); }
 
+    /// The project the open drawing belongs to, when there is one. Its
+    /// digest goes with every request, and its sheets answer questions.
+    void useProject(ProjectIndex* project) { project_ = project; }
+
     /// Learn from this folder for this run, whatever the settings say.
     void useReferenceDirectory(const QString& directory) { referenceOverride_ = directory; }
     [[nodiscard]] QString referenceDirectory() const;
@@ -105,6 +110,8 @@ public:
 private:
     [[nodiscard]] std::unique_ptr<AgentProvider> makeProvider() const;
     [[nodiscard]] QString standards(QStringList* log);
+    /// The project's sheets in a line each, and which sheet is open.
+    [[nodiscard]] QString projectDigest(Document& document, QStringList* log);
 
     ConfigFile& config_;
     AgentSettings settings_;
@@ -112,6 +119,7 @@ private:
     QString canned_;
     QString referenceOverride_;
     AgentAnswerer questions_;
+    ProjectIndex* project_ = nullptr;
 };
 
 }  // namespace cad::app

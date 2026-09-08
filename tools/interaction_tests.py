@@ -827,6 +827,38 @@ def test_the_assistant_can_ask_for_facts_and_ask_the_user(work: Path) -> None:
     expect(len(lines_in(saved)) == 1, "the duct line was not drawn")
 
 
+def test_a_project_beside_the_drawing_is_told_to_the_assistant(work: Path) -> None:
+    """A project file listing the saved drawing as sheet M2.1 puts the set,
+    and which sheet is open, into what the assistant is told.
+
+    The sheet's reading is made from its file, so the room drawn here shows
+    up in the sheet's line. A sheet whose file is missing is said to be.
+    """
+    folder = work / "set"
+    folder.mkdir(exist_ok=True)
+    drawing = folder / "M2.1.dxf"
+    run(work, "project-draw", [
+        "--run", "RECTANGLE", "--run", "0,0", "--run", "4000,3000",
+        "--run", "TEXT", "--run", "1500,1600", "--run", "100", "--run", "0",
+        "--run", "OFFICE", "--run", "",
+        "--save-as", str(drawing),
+    ], save=False)
+    (folder / "project.slate").write_text(
+        "project: Test Set\n"
+        "discipline: M\n"
+        "sheet: M2.1 | Duct Plan | M2.1.dxf | | | draft\n"
+        "sheet: M0.1 | Notes | M0.1.dxf\n", encoding="utf-8")
+    log, _ = run(work, "project-context", [
+        "--open", str(drawing), "--agent-context",
+    ], save=False)
+    expect("Project: Test Set (M)" in log, f"the project was not found beside the drawing:\n{log}")
+    expect("M2.1 Duct Plan, draft - 1 rooms" in log, f"the sheet was not read:\n{log}")
+    expect("M0.1 Notes - not read" in log, f"the missing sheet was not reported:\n{log}")
+    expect("The open drawing is sheet M2.1 Duct Plan." in log,
+           f"the open sheet was not named:\n{log}")
+    expect((folder / "project.slate.index").exists(), "the sheet readings were not cached")
+
+
 def test_the_assistant_learns_house_standards_from_a_reference_folder(work: Path) -> None:
     """A folder of the office's drawings teaches the layers it uses.
 
@@ -1466,6 +1498,7 @@ SCENARIOS = [
     test_area_of_an_open_object_reports_length,
     test_describe_reads_a_labelled_room,
     test_the_assistant_can_ask_for_facts_and_ask_the_user,
+    test_a_project_beside_the_drawing_is_told_to_the_assistant,
     test_two_hot_grips_on_one_object_stretch_together,
     test_two_hot_grips_move_the_object_once,
     test_two_midpoint_grips_each_add_a_corner,

@@ -1,6 +1,8 @@
 #include "MainWindow.hpp"
 #include "AgentService.hpp"
 #include "AgentSettingsDialog.hpp"
+#include "ProjectDialog.hpp"
+#include "ProjectIndex.hpp"
 
 #include <array>
 #include <functional>
@@ -483,6 +485,9 @@ void MainWindow::buildMenus() {
     // AI command that actually asks the assistant for something, so the Tools
     // menu listed the same words twice for two different things.
     toolsMenu->addAction(tr("AI Assistant &Settings…"), this, &MainWindow::onAgentSettings);
+    // The set the drawing belongs to: made here, kept beside the drawings,
+    // never required.
+    toolsMenu->addAction(tr("&Project…"), this, &MainWindow::onProject);
     toolsMenu->addSeparator();
     toolsMenu->addAction(tr("&Settings…"), QKeySequence::Preferences, this,
                          &MainWindow::onSettings);
@@ -1836,9 +1841,68 @@ bool MainWindow::showRibbonTab(const QString& title) {
     return ribbon_ != nullptr && ribbon_->showTab(title);
 }
 
+void MainWindow::onProject() {
+    // The folder the drawing is in, or the last folder used, is where a new
+    // project goes: beside the drawings it describes.
+    QString folder;
+    if (document_ != nullptr && !document_->filePath.empty()) {
+        folder = QFileInfo{QString::fromStdString(document_->filePath)}.absolutePath();
+    }
+    if (folder.isEmpty()) {
+        folder = QDir::currentPath();
+    }
+    ProjectIndex& index = ensureProject();
+    ProjectDialog dialog{index, folder, this};
+    if (dialog.exec() != QDialog::Accepted) {
+        return;
+    }
+    log(tr("Project: %1 (%n sheet(s)) saved to %2", "",
+           static_cast<int>(index.project().sheets.size()))
+            .arg(QString::fromStdString(index.project().name),
+                 QDir::toNativeSeparators(index.path())));
+}
+
+ProjectIndex& MainWindow::ensureProject() {
+    if (project_ == nullptr) {
+        project_ = std::make_unique<ProjectIndex>(translator_.get());
+        if (agent_ != nullptr) {
+            agent_->useProject(project_.get());
+        }
+    }
+    return *project_;
+}
+
+void MainWindow::openProjectBeside(const QString& drawingPath) {
+    // A project file beside the drawing is the set it belongs to. One
+    // opened by hand stays: a drawing from elsewhere does not close it.
+    if (project_ != nullptr && project_->isOpen() &&
+        ProjectIndex::projectFileFor(drawingPath).isEmpty()) {
+        return;
+    }
+    const bool had = project_ != nullptr && project_->isOpen();
+    ensureProject().openBeside(drawingPath);
+    if (project_->isOpen() && (!had || project_->path() != ProjectIndex::projectFileFor(drawingPath))) {
+        log(tr("Project: %1 (%n sheet(s))", "", static_cast<int>(project_->project().sheets.size()))
+                .arg(QString::fromStdString(project_->project().name)));
+    }
+}
+
+void MainWindow::useProject(const QString& path) {
+    QString error;
+    if (!ensureProject().open(path, &error)) {
+        log(tr("! %1").arg(error));
+        return;
+    }
+    log(tr("Project: %1 (%n sheet(s))", "", static_cast<int>(project_->project().sheets.size()))
+            .arg(QString::fromStdString(project_->project().name)));
+}
+
 AgentService& MainWindow::ensureAgent() {
     if (agent_ == nullptr) {
         agent_ = std::make_unique<AgentService>(config_, translator_.get(), settingsDirectory());
+        if (project_ != nullptr) {
+            agent_->useProject(project_.get());
+        }
         // The assistant may ask the user a round of questions before it
         // answers. In a window they get a small form, each answer filled in
         // with the assistant's own suggestion so accepting is one click; a
@@ -2483,6 +2547,7 @@ void MainWindow::openFile(const QString& path) {
         std::unique_ptr<Document> opened = makeDocument();
         opened->reset(std::move(loaded.database));
         opened->filePath = filePath.string();
+        openProjectBeside(path);
 
         // A second file is a second tab, not a replacement. The history and the
         // view belong to the drawing that produced them, so they are cleared
@@ -2661,6 +2726,7 @@ bool MainWindow::saveTo(const QString& path) {
         document_->filePath = target.string();
         document_->markSaved();
         currentPath_ = path;
+        openProjectBeside(path);
 
         // The work is on disk under its own name now, so the recovery copy has
         // nothing left to protect. Both names are cleared: Save As moves the

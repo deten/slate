@@ -32,6 +32,7 @@ class QToolButton;
 namespace cad::app {
 
 class AgentService;
+class ProjectIndex;
 
 class CanvasWidget;
 class CommandLine;
@@ -110,6 +111,9 @@ public:
     /// Learn house standards from this folder for this run, whatever the
     /// settings say.
     void useAgentReference(const QString& directory);
+    /// Use this project file for the session, whatever sits beside the
+    /// drawing. For scripted runs and for a set kept away from its files.
+    void useProject(const QString& path);
     /// Print what the assistant would be told, without asking it.
     void showAgentContext();
     /// The assistant, made on first use.
@@ -271,6 +275,7 @@ private Q_SLOTS:
     /// Show lineweights at their width on screen, or as hairlines.
     void toggleLineweights();
     void onAgentSettings();
+    void onProject();
 
     void onPurge();
     void onReferenceManager();
@@ -554,6 +559,11 @@ private:
     QToolButton* trackingButton_ = nullptr;
     QToolButton* lineweightButton_ = nullptr;
     std::unique_ptr<AgentService> agent_;
+    /// The set the open drawing belongs to, found beside it or opened by
+    /// hand; empty when there is none. Never required.
+    std::unique_ptr<ProjectIndex> project_;
+    [[nodiscard]] ProjectIndex& ensureProject();
+    void openProjectBeside(const QString& drawingPath);
     /// Menus made for a command category, torn down when they are rebuilt.
     std::vector<QMenu*> commandMenus_;
     /// Actions appended to a menu that already existed, kept so a rebuild can
