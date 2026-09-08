@@ -687,6 +687,42 @@ std::string decodeDxfText(std::string_view raw) {
             ++i;
             continue;
         }
+        // `\U+XXXX` is how a file in a legacy code page spells a character
+        // outside it. Decoded here so the drawing shows the character and
+        // the writer, which spells it the same way, gives it back unchanged.
+        if (raw[i] == '\\' && i + 6 < raw.size() && raw[i + 1] == 'U' && raw[i + 2] == '+') {
+            unsigned int codePoint = 0;
+            bool valid = true;
+            for (std::size_t k = 0; k < 4; ++k) {
+                const char c = raw[i + 3 + k];
+                unsigned int digit = 0;
+                if (c >= '0' && c <= '9') {
+                    digit = static_cast<unsigned int>(c - '0');
+                } else if (c >= 'A' && c <= 'F') {
+                    digit = static_cast<unsigned int>(c - 'A' + 10);
+                } else if (c >= 'a' && c <= 'f') {
+                    digit = static_cast<unsigned int>(c - 'a' + 10);
+                } else {
+                    valid = false;
+                    break;
+                }
+                codePoint = codePoint * 16 + digit;
+            }
+            if (valid) {
+                if (codePoint < 0x80) {
+                    out.push_back(static_cast<char>(codePoint));
+                } else if (codePoint < 0x800) {
+                    out.push_back(static_cast<char>(0xC0 | (codePoint >> 6)));
+                    out.push_back(static_cast<char>(0x80 | (codePoint & 0x3F)));
+                } else {
+                    out.push_back(static_cast<char>(0xE0 | (codePoint >> 12)));
+                    out.push_back(static_cast<char>(0x80 | ((codePoint >> 6) & 0x3F)));
+                    out.push_back(static_cast<char>(0x80 | (codePoint & 0x3F)));
+                }
+                i += 6;
+                continue;
+            }
+        }
         if (raw[i] == '%' && i + 2 < raw.size() && raw[i + 1] == '%') {
             const char code = static_cast<char>(
                 std::toupper(static_cast<unsigned char>(raw[i + 2])));

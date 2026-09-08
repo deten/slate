@@ -3,6 +3,7 @@
 #include "test_helpers.hpp"
 
 #include <map>
+#include <span>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -12,6 +13,8 @@
 #include "cad/db/Database.hpp"
 #include "cad/db/DimensionEntity.hpp"
 #include "cad/db/HatchEntity.hpp"
+#include "cad/db/Layer.hpp"
+#include "cad/db/TextEntities.hpp"
 #include "cad/db/ViewportEntity.hpp"
 #include "cad/io/DxfReader.hpp"
 #include "cad/io/DxfWriter.hpp"
@@ -277,6 +280,80 @@ TEST_CASE("a sheet block spelled in capitals still writes its contents as paper 
     CHECK(lineAt > entities);
     const std::string record = text.substr(lineAt, text.find("\n  0\n", lineAt + 1) - lineAt);
     CHECK((record.find("\n 67\n1\n") != std::string::npos || record.find("\n67\n1\n") != std::string::npos));
+}
+
+TEST_CASE("text symbols and accented letters go out as the escapes other readers expect") {
+    // The file declares a legacy code page. Raw UTF-8 in it came back as
+    // "Â°"; the degree, diameter and plus-minus signs go out as the %% codes
+    // older files use, and anything else outside ASCII as \U+XXXX.
+    auto db = Database::createEmpty();
+    auto text = std::make_unique<TextEntity>(Vec3{0.0, 0.0, 0.0},
+                                             std::string{"45\xC2\xB0 \xE2\x8C\x80" "20 \xC2\xB1" "1 Gr\xC3\xB6\xC3\x9F" "e"}, 2.5);
+    db->addToModelSpace(std::move(text));
+    auto note = std::make_unique<MTextEntity>(Vec3{0.0, 10.0, 0.0}, std::string{"Temp 78\xC2\xB0 F"}, 2.5);
+    db->addToModelSpace(std::move(note));
+    Layer& layer = db->ensureLayer("Gr\xC3\xB6\xC3\x9F" "e");
+    static_cast<void>(layer);
+
+    std::string written = io::writeDxf(*db);
+    std::erase(written, '\r');
+    CHECK(written.find("45%%d %%c20 %%p1 Gr\\U+00F6\\U+00DFe") != std::string::npos);
+    CHECK(written.find("Temp 78%%d F") != std::string::npos);
+    CHECK(written.find("\nGr\\U+00F6\\U+00DFe\n") != std::string::npos);
+    // Nothing outside ASCII is left in the file.
+    for (const char c : written) {
+        REQUIRE(static_cast<unsigned char>(c) < 0x80);
+    }
+
+    // And it all comes back as it was.
+    const io::DxfReadResult back = io::readDxf(written);
+    REQUIRE(back.database != nullptr);
+    bool sawText = false;
+    bool sawNote = false;
+    for (const Entity* entity : back.database->entitiesIn(back.database->modelSpace())) {
+        if (const auto* line = dynamic_cast<const TextEntity*>(entity)) {
+            sawText = line->contents == "45\xC2\xB0 \xE2\x8C\x80" "20 \xC2\xB1" "1 Gr\xC3\xB6\xC3\x9F" "e";
+        }
+        if (const auto* paragraph = dynamic_cast<const MTextEntity*>(entity)) {
+            sawNote = paragraph->contents == "Temp 78\xC2\xB0 F";
+        }
+    }
+    CHECK(sawText);
+    CHECK(sawNote);
+    CHECK(back.database->findLayer("Gr\xC3\xB6\xC3\x9F" "e") != nullptr);
+}
+
+TEST_CASE("a polyline with a wide first segment says every other vertex is thin") {
+    // A reader that meets a vertex with no width carries the previous one
+    // forward, so leaving zeros out made the whole line wide.
+    auto db = Database::createEmpty();
+    const Vec3 corners[] = {Vec3{0.0, 0.0, 0.0}, Vec3{10.0, 0.0, 0.0}, Vec3{10.0, 10.0, 0.0},
+                            Vec3{0.0, 10.0, 0.0}};
+    auto polyline = std::make_unique<PolylineEntity>(
+        PolylineEntity::fromPoints(std::span<const Vec3>{corners}, false));
+    polyline->vertices[0].startWidth = 0.5;
+    polyline->vertices[0].endWidth = 0.5;
+    db->addToModelSpace(std::move(polyline));
+
+    const auto groups = firstRecord(io::writeDxf(*db), "LWPOLYLINE");
+    REQUIRE(groups.contains(40));
+    CHECK(groups.at(40).size() == 4);
+    CHECK(groups.at(41).size() == 4);
+}
+
+TEST_CASE("an attribute keeps its field length") {
+    auto db = Database::createEmpty();
+    auto block = std::make_unique<BlockTableRecord>();
+    block->name = "TAG";
+    BlockTableRecord& record = db->addBlock(std::move(block));
+    auto definition = std::make_unique<AttributeDefinitionEntity>();
+    definition->tag = "ROOM";
+    definition->flags.fieldLength = 25;
+    db->addEntity(std::move(definition), record);
+
+    const auto groups = firstRecord(io::writeDxf(*db), "ATTDEF");
+    REQUIRE(groups.contains(73));
+    CHECK(groups.at(73).front().find("25") != std::string::npos);
 }
 
 TEST_CASE("a boundary names the associative hatch it feeds") {

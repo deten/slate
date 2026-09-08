@@ -7,6 +7,50 @@
 namespace cad::io {
 namespace {
 
+/// `\U+XXXX` escapes to UTF-8; anything else passes through untouched.
+[[nodiscard]] std::string decodeUnicodeEscapes(std::string_view raw) {
+    if (raw.find("\\U+") == std::string_view::npos) {
+        return std::string{raw};
+    }
+    std::string out;
+    out.reserve(raw.size());
+    for (std::size_t i = 0; i < raw.size(); ++i) {
+        if (raw[i] == '\\' && i + 6 < raw.size() && raw[i + 1] == 'U' && raw[i + 2] == '+') {
+            unsigned int codePoint = 0;
+            bool valid = true;
+            for (std::size_t k = 0; k < 4; ++k) {
+                const char c = raw[i + 3 + k];
+                if (c >= '0' && c <= '9') {
+                    codePoint = codePoint * 16 + static_cast<unsigned int>(c - '0');
+                } else if (c >= 'A' && c <= 'F') {
+                    codePoint = codePoint * 16 + static_cast<unsigned int>(c - 'A' + 10);
+                } else if (c >= 'a' && c <= 'f') {
+                    codePoint = codePoint * 16 + static_cast<unsigned int>(c - 'a' + 10);
+                } else {
+                    valid = false;
+                    break;
+                }
+            }
+            if (valid) {
+                if (codePoint < 0x80) {
+                    out.push_back(static_cast<char>(codePoint));
+                } else if (codePoint < 0x800) {
+                    out.push_back(static_cast<char>(0xC0 | (codePoint >> 6)));
+                    out.push_back(static_cast<char>(0x80 | (codePoint & 0x3F)));
+                } else {
+                    out.push_back(static_cast<char>(0xE0 | (codePoint >> 12)));
+                    out.push_back(static_cast<char>(0x80 | ((codePoint >> 6) & 0x3F)));
+                    out.push_back(static_cast<char>(0x80 | (codePoint & 0x3F)));
+                }
+                i += 6;
+                continue;
+            }
+        }
+        out.push_back(raw[i]);
+    }
+    return out;
+}
+
 [[nodiscard]] std::string_view trim(std::string_view text) noexcept {
     const auto isSpace = [](char c) {
         return std::isspace(static_cast<unsigned char>(c)) != 0;
@@ -154,10 +198,13 @@ std::optional<std::string_view> DxfTokenizer::readLine() {
 std::optional<GroupValue> DxfTokenizer::parseValue(int code, std::string_view raw) {
     switch (groupValueType(code)) {
         case GroupValueType::Text:
+            // String values keep their internal whitespace: a text entity's
+            // contents may legitimately begin or end with spaces. Characters
+            // the file's code page could not hold arrive as \U+XXXX, in names
+            // as much as in text, and are characters from here on.
+            return GroupValue{decodeUnicodeEscapes(raw)};
         case GroupValueType::Handle:
         case GroupValueType::Binary:
-            // String values keep their internal whitespace: a text entity's
-            // contents may legitimately begin or end with spaces.
             return GroupValue{std::string{raw}};
 
         case GroupValueType::Double: {
