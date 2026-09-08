@@ -32,7 +32,6 @@
 namespace cad::io {
 
 /// Defined with the builder below; used by the entity writers above it.
-[[nodiscard]] std::string escapeNonAscii(std::string_view utf8);
 [[nodiscard]] std::string encodeDxfText(std::string_view utf8);
 
 namespace {
@@ -298,9 +297,7 @@ void writeMText(const Entity& entity, const Database& db, DxfBuilder& out) {
     // remainder in code 1, which is what other CAD software expects and what the reader
     // reassembles.
     constexpr std::size_t kChunk = 250;
-    // Escaped before it is split, so no chunk boundary falls inside a
-    // multi-byte character or an escape.
-    const std::string contents = escapeNonAscii(encodeDxfText(mtext.contents));
+    const std::string contents = encodeDxfText(mtext.contents);
     std::size_t offset = 0;
     while (contents.size() - offset > kChunk) {
         out.pair(3, contents.substr(offset, kChunk));
@@ -788,75 +785,31 @@ void writeViewport(const Entity& entity, const Database& db, DxfBuilder& out) {
 
 // ------------------------------------------------------------------ DxfBuilder
 
-/// A string the way a DXF in a legacy code page carries characters outside
-/// it: each as `\U+XXXX`. The file declares ANSI_1252, and a reader honouring
-/// that turns raw UTF-8 into two wrong characters per accented letter; a
-/// degree sign came back as "Â°". The escape is what other CAD software
-/// writes, and what every reader of these files decodes.
-[[nodiscard]] std::string escapeNonAscii(std::string_view utf8) {
-    bool plain = true;
-    for (const char c : utf8) {
-        if (static_cast<unsigned char>(c) >= 0x80) {
-            plain = false;
-            break;
-        }
-    }
-    if (plain) {
-        return std::string{utf8};
-    }
-    std::string out;
-    out.reserve(utf8.size() + 8);
-    for (std::size_t i = 0; i < utf8.size();) {
-        const auto lead = static_cast<unsigned char>(utf8[i]);
-        if (lead < 0x80) {
-            out.push_back(static_cast<char>(lead));
-            ++i;
-            continue;
-        }
-        std::size_t length = lead >= 0xF0 ? 4 : lead >= 0xE0 ? 3 : lead >= 0xC0 ? 2 : 1;
-        if (length == 1 || i + length > utf8.size()) {
-            // Not UTF-8 after all; passed through rather than invented.
-            out.push_back(static_cast<char>(lead));
-            ++i;
-            continue;
-        }
-        unsigned int codePoint = lead & (length == 2 ? 0x1Fu : length == 3 ? 0x0Fu : 0x07u);
-        for (std::size_t k = 1; k < length; ++k) {
-            codePoint = (codePoint << 6) | (static_cast<unsigned char>(utf8[i + k]) & 0x3Fu);
-        }
-        if (codePoint > 0xFFFF) {
-            out.append(utf8.substr(i, length));
-        } else {
-            char buffer[8];
-            std::snprintf(buffer, sizeof(buffer), "\\U+%04X", codePoint);
-            out += buffer;
-        }
-        i += length;
-    }
-    return out;
-}
-
 void DxfBuilder::pair(int code, std::string_view value) {
+    // Written as UTF-8, which is what a file of this version carries. The
+    // \U+XXXX spelling is for files in a legacy code page; a reader given it
+    // in a paragraph here kept the escape as literal text.
     text_ += std::to_string(code);
     text_ += "\r\n";
-    text_ += escapeNonAscii(value);
+    text_ += value;
     text_ += "\r\n";
 }
 
 std::string encodeDxfText(std::string_view utf8) {
-    // The three symbols every drafter types, spelled the way older files
-    // spell them, so a callout written here reads the same in any file.
+    // The three symbols every drafter types, spelled the way files spell
+    // them, so a callout written here reads the same in any file and comes
+    // back from one as it went in.
     std::string out;
     out.reserve(utf8.size());
     for (std::size_t i = 0; i < utf8.size();) {
         if (utf8.compare(i, 2, "\xC2\xB0") == 0) {
-            out += "%%d";
+            out += "%%D";
             i += 2;
         } else if (utf8.compare(i, 3, "\xE2\x8C\x80") == 0) {
-            out += "%%c";
+            out += "%%C";
             i += 3;
         } else if (utf8.compare(i, 2, "\xC2\xB1") == 0) {
-            out += "%%p";
+            out += "%%P";
             i += 2;
         } else {
             out.push_back(utf8[i]);

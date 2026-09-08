@@ -282,10 +282,11 @@ TEST_CASE("a sheet block spelled in capitals still writes its contents as paper 
     CHECK((record.find("\n 67\n1\n") != std::string::npos || record.find("\n67\n1\n") != std::string::npos));
 }
 
-TEST_CASE("text symbols and accented letters go out as the escapes other readers expect") {
-    // The file declares a legacy code page. Raw UTF-8 in it came back as
-    // "Â°"; the degree, diameter and plus-minus signs go out as the %% codes
-    // older files use, and anything else outside ASCII as \U+XXXX.
+TEST_CASE("text symbols go out as %% codes and other characters as UTF-8, and all come back") {
+    // The degree, diameter and plus-minus signs go out as the %% codes files
+    // carry them in, so they survive a trip through another program's file
+    // unchanged; everything else is UTF-8, which this file version is. A
+    // \U+XXXX escape in a file from a legacy code page is decoded on read.
     auto db = Database::createEmpty();
     auto text = std::make_unique<TextEntity>(Vec3{0.0, 0.0, 0.0},
                                              std::string{"45\xC2\xB0 \xE2\x8C\x80" "20 \xC2\xB1" "1 Gr\xC3\xB6\xC3\x9F" "e"}, 2.5);
@@ -297,13 +298,13 @@ TEST_CASE("text symbols and accented letters go out as the escapes other readers
 
     std::string written = io::writeDxf(*db);
     std::erase(written, '\r');
-    CHECK(written.find("45%%d %%c20 %%p1 Gr\\U+00F6\\U+00DFe") != std::string::npos);
-    CHECK(written.find("Temp 78%%d F") != std::string::npos);
-    CHECK(written.find("\nGr\\U+00F6\\U+00DFe\n") != std::string::npos);
-    // Nothing outside ASCII is left in the file.
-    for (const char c : written) {
-        REQUIRE(static_cast<unsigned char>(c) < 0x80);
-    }
+    CHECK(written.find("45%%D %%C20 %%P1 Gr\xC3\xB6\xC3\x9F" "e") != std::string::npos);
+    CHECK(written.find("Temp 78%%D F") != std::string::npos);
+    CHECK(written.find("\nGr\xC3\xB6\xC3\x9F" "e\n") != std::string::npos);
+    // The three symbols never go out raw: a file that read them as %% codes
+    // gets them back that way.
+    CHECK(written.find("\xC2\xB0") == std::string::npos);
+    CHECK(written.find("\xE2\x8C\x80") == std::string::npos);
 
     // And it all comes back as it was.
     const io::DxfReadResult back = io::readDxf(written);
