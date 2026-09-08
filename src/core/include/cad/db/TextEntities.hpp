@@ -42,6 +42,12 @@ void setTextMeasurer(TextMeasurer measurer);
 
 [[nodiscard]] double measureText(std::string_view text, double height, double widthFactor);
 
+/// Text as it reads on the drawing: the `%%d`-style symbol codes files carry
+/// (degree, diameter, plus-minus, a literal percent) turned into their
+/// characters, and the underline and overline toggles dropped. The stored
+/// text keeps the codes as written, so a file gets them back unchanged.
+[[nodiscard]] std::string decodeTextSymbols(std::string_view text);
+
 /// A single-line text entity — TEXT.
 class TextEntity : public Entity {
 public:

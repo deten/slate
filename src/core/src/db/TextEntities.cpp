@@ -1,7 +1,9 @@
 #include "cad/db/TextEntities.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <stdexcept>
+#include <string_view>
 
 namespace cad {
 namespace {
@@ -223,8 +225,53 @@ std::string MTextEntity::escapeForContents(std::string_view text) {
     return out;
 }
 
+std::string decodeTextSymbols(std::string_view text) {
+    if (text.find("%%") == std::string_view::npos) {
+        return std::string{text};
+    }
+    std::string shown;
+    shown.reserve(text.size());
+    for (std::size_t i = 0; i < text.size(); ++i) {
+        if (text[i] == '%' && i + 2 < text.size() && text[i + 1] == '%') {
+            const char code = static_cast<char>(
+                std::toupper(static_cast<unsigned char>(text[i + 2])));
+            if (code == 'D') {
+                shown += "\xC2\xB0";  // degree
+                i += 2;
+                continue;
+            }
+            if (code == 'C') {
+                shown += "\xE2\x8C\x80";  // diameter
+                i += 2;
+                continue;
+            }
+            if (code == 'P') {
+                shown += "\xC2\xB1";  // plus or minus
+                i += 2;
+                continue;
+            }
+            if (code == '%') {
+                shown.push_back('%');
+                i += 2;
+                continue;
+            }
+            if (code == 'U' || code == 'O') {
+                // Underline and overline toggles: not drawn, not shown.
+                i += 2;
+                continue;
+            }
+        }
+        shown.push_back(text[i]);
+    }
+    return shown;
+}
+
 std::vector<MTextRun> MTextEntity::formattedRuns() const {
-    return parseMText(contents);
+    std::vector<MTextRun> runs = parseMText(contents);
+    for (MTextRun& run : runs) {
+        run.text = decodeTextSymbols(run.text);
+    }
+    return runs;
 }
 
 std::string MTextEntity::plainText() const {
@@ -291,7 +338,7 @@ std::string MTextEntity::plainText() const {
         }
         out.push_back(ch);
     }
-    return out;
+    return decodeTextSymbols(out);
 }
 
 std::vector<std::string> MTextEntity::lines() const {

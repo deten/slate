@@ -723,26 +723,9 @@ std::string decodeDxfText(std::string_view raw) {
                 continue;
             }
         }
-        if (raw[i] == '%' && i + 2 < raw.size() && raw[i + 1] == '%') {
-            const char code = static_cast<char>(
-                std::toupper(static_cast<unsigned char>(raw[i + 2])));
-            // Legacy symbol escapes, still constant in older drawings.
-            if (code == 'D') {
-                out += "°";  // degree
-                i += 2;
-                continue;
-            }
-            if (code == 'C') {
-                out += "⌀";  // diameter
-                i += 2;
-                continue;
-            }
-            if (code == 'P') {
-                out += "±";  // plus/minus
-                i += 2;
-                continue;
-            }
-        }
+        // `%%d`-style symbol codes are kept as written. They are decoded for
+        // display (see decodeTextSymbols), and kept in the text so a file
+        // spelling them one way gets them back spelled that way.
         out.push_back(raw[i]);
     }
     return out;

@@ -306,22 +306,29 @@ TEST_CASE("text symbols go out as %% codes and other characters as UTF-8, and al
     CHECK(written.find("\xC2\xB0") == std::string::npos);
     CHECK(written.find("\xE2\x8C\x80") == std::string::npos);
 
-    // And it all comes back as it was.
+    // Read back, the codes stay as the file spells them, and reading them
+    // for display gives the symbols; a lower-case code from another file
+    // stays lower case.
     const io::DxfReadResult back = io::readDxf(written);
     REQUIRE(back.database != nullptr);
     bool sawText = false;
     bool sawNote = false;
     for (const Entity* entity : back.database->entitiesIn(back.database->modelSpace())) {
         if (const auto* line = dynamic_cast<const TextEntity*>(entity)) {
-            sawText = line->contents == "45\xC2\xB0 \xE2\x8C\x80" "20 \xC2\xB1" "1 Gr\xC3\xB6\xC3\x9F" "e";
+            sawText = line->contents == "45%%D %%C20 %%P1 Gr\xC3\xB6\xC3\x9F" "e" &&
+                      decodeTextSymbols(line->contents) ==
+                          "45\xC2\xB0 \xE2\x8C\x80" "20 \xC2\xB1" "1 Gr\xC3\xB6\xC3\x9F" "e";
         }
         if (const auto* paragraph = dynamic_cast<const MTextEntity*>(entity)) {
-            sawNote = paragraph->contents == "Temp 78\xC2\xB0 F";
+            sawNote = paragraph->contents == "Temp 78%%D F" &&
+                      paragraph->plainText() == "Temp 78\xC2\xB0 F";
         }
     }
     CHECK(sawText);
     CHECK(sawNote);
     CHECK(back.database->findLayer("Gr\xC3\xB6\xC3\x9F" "e") != nullptr);
+    CHECK(decodeTextSymbols("10%%d, 20%%c, 5%%p, 100%%%, %%uUNDER%%u") ==
+          "10\xC2\xB0, 20\xE2\x8C\x80, 5\xC2\xB1, 100%, UNDER");
 }
 
 TEST_CASE("a polyline with a wide first segment says every other vertex is thin") {

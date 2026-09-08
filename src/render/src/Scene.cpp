@@ -262,7 +262,7 @@ void SceneBuilder::appendMLeader(const MLeaderEntity& leader, const Mat4& transf
         text.handle = leader.handle;
         text.style = style;
         text.position = transform.transformPoint(leader.textLocation);
-        text.text = leader.text;
+        text.text = decodeTextSymbols(leader.text);
         text.textHeight = leader.textHeight * transform.scaleFactor2();
         text.textRotation = leader.textRotation + transform.rotation2();
         // The context data's attachment is the nine-way MTEXT one, split into
@@ -332,7 +332,7 @@ void SceneBuilder::appendDimension(const DimensionEntity& dimension, const Mat4&
         text.handle = dimension.handle;
         text.style = style;
         text.position = transform.transformPoint(geometry.textPosition);
-        text.text = geometry.text;
+        text.text = decodeTextSymbols(geometry.text);
         text.textHeight = geometry.textHeight * transform.scaleFactor2();
         text.textRotation = geometry.textRotation + transform.rotation2();
         // Dimension text hangs from its middle, not from a baseline corner.
@@ -851,7 +851,7 @@ void SceneBuilder::appendEntity(const Entity& entity, const Mat4& transform,
         }
         item.kind = DrawItem::Kind::Text;
         item.position = transform.transformPoint(text->effectivePosition());
-        item.text = text->contents;
+        item.text = decodeTextSymbols(text->contents);
         // A definition in the open -- in the model, or a block being edited --
         // shows its tag, which is what a drafter placing it needs to see. Seen
         // through an insert it shows its value (only constant ones get here).
