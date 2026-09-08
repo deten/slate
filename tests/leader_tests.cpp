@@ -273,6 +273,36 @@ TEST_CASE("the landing direction is known even for a leader that never stated on
     CHECK(leader.landingDirection().x > 0.0);
 }
 
+TEST_CASE("a leader read without a landing direction takes the file's default, not a guess") {
+    // A converter leaves group 211 out when it holds the default, the X
+    // axis. This leader arrives from the right; guessing from that flipped
+    // the landing, and the file written back disagreed with the original.
+    const std::string text =
+        "0\nSECTION\n2\nENTITIES\n"
+        "0\nLEADER\n5\n3D5\n330\n1F\n100\nAcDbEntity\n8\n0\n"
+        "100\nAcDbLeader\n3\nStandard\n71\n1\n72\n0\n73\n3\n76\n3\n"
+        "10\n7.7\n20\n10.27\n30\n0.0\n"
+        "10\n7.49\n20\n10.62\n30\n0.0\n"
+        "10\n7.39\n20\n10.62\n30\n0.0\n"
+        "0\nENDSEC\n0\nEOF\n";
+    const io::DxfReadResult read = io::readDxf(text);
+    REQUIRE(read.database != nullptr);
+    const LeaderEntity* leader = nullptr;
+    for (const Entity* entity : read.database->entitiesIn(read.database->modelSpace())) {
+        leader = dynamic_cast<const LeaderEntity*>(entity);
+        if (leader != nullptr) {
+            break;
+        }
+    }
+    REQUIRE(leader != nullptr);
+    CHECK(leader->hasHorizontalDirection);
+    CHECK(leader->landingDirection().x > 0.0);
+
+    std::string written = io::writeDxf(*read.database);
+    std::erase(written, '\r');
+    CHECK(written.find("\n211\n1.0\n") != std::string::npos);
+}
+
 TEST_CASE("a leader and its note survive a DXF round-trip") {
     auto db = Database::createEmpty();
 

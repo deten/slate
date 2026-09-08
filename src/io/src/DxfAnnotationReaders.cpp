@@ -428,6 +428,12 @@ std::unique_ptr<Entity> readLeader(const DxfRecord& record, ReadContext& context
     if (const auto direction = record.optionalPoint(211)) {
         entity->horizontalDirection = *direction;
         entity->hasHorizontalDirection = true;
+    } else {
+        // Absent means the default, which is the X axis: a converter leaves
+        // the group out whenever that is what it holds. Guessing from the way
+        // the leader arrives instead flipped every leader drawn leftwards.
+        entity->horizontalDirection = Vec3::unitX();
+        entity->hasHorizontalDirection = true;
     }
 
     // Named, and the DIMSTYLE table may not have been read yet -- the same
