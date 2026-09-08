@@ -159,6 +159,7 @@ const std::vector<RibbonTab>& ribbonLayout() {
                {"AREA", kLarge},
                {"ID", kSmall},
                {"LIST", kSmall},
+               {"DESCRIBE", kSmall},
                {"MEASURE", kSmall},
                {"DIVIDE", kSmall}}},
              {"Drawing", {{"PURGE", kLarge}}},

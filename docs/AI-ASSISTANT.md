@@ -33,6 +33,38 @@ at. A model inventing a plausible-sounding command is the usual failure, and
 running its arguments through whatever else happened to match would change the
 drawing in a way nobody asked for while still reading as though it worked.
 
+## What Slate reads before asking
+
+A digest of counts cannot tell a model which room is the corridor. Before a
+request goes out, Slate reads the drawing as the things a person would name,
+and passes that along too:
+
+- **Rooms.** Every label set in capitals that reads as a name ("OFFICE",
+  "CONF. #1", "STAFF WORK AREA") with the room number beside it, and, where
+  the walls around the label close, the room's area, size and centre. Doors
+  and windows count as closing, since their leaf and swing sit in the gap. A
+  label whose walls do not close is still reported, marked not enclosed.
+- **Systems by layer.** Layers named for ducts, pipes, fittings, terminals or
+  equipment, with what is on them: single-line runs drawn with a width, with
+  their widths and total length, lines, circles, the blocks placed, and the
+  labels used. The name also says whether the layer is supply, return or
+  exhaust, and whether it is new, existing or demolition work.
+- **The shell.** Which layers hold walls, how many doors and windows, and
+  which blocks they are.
+- **The title block.** The block with the most attributes on each sheet,
+  and its fields.
+
+Frozen and switched-off layers are read, and so is everything a resolved
+external reference brings in, placed where the reference is placed: a
+mechanical plan nearly always references the architecture, and the rooms are
+in the reference. Nothing is read from a reference that could not be found.
+
+**DESCRIBE** prints the same reading in the history, so what the assistant
+will be told can be checked before anything is asked of it. A room it did
+not find gets no duct; a room it found in the wrong place gets one there.
+Tracing walls stops after two seconds on a very large plan and the rest of
+the rooms are reported by their labels.
+
 ## Setting it up
 
 **Tools > AI Assistant…**

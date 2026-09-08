@@ -4,6 +4,7 @@
 #include <format>
 #include <unordered_map>
 
+#include "cad/agent/DrawingReading.hpp"
 #include "cad/command/StandardCommands.hpp"
 #include "cad/db/BlockTableRecord.hpp"
 #include "cad/db/CurveEntities.hpp"
@@ -1432,6 +1433,44 @@ private:
 };
 
 /// LIST: what an object is, in words, in the history.
+/// DESCRIBE: the drawing read as rooms, systems, shell and title block, in
+/// the history.
+///
+/// The same reading the assistant is given, shown to the person, so what it
+/// understood can be checked before anything is asked of it: a room it did
+/// not find gets no duct.
+class DescribeCommand final : public CommandInstance {
+public:
+    StepResult start(CommandContext& context) override {
+        const DrawingReading reading = readDrawing(context.db());
+        const std::string text = reading.describe();
+        if (text.empty()) {
+            return StepResult::done("Nothing to describe: no rooms, systems or title block found");
+        }
+        std::size_t begin = 0;
+        while (begin < text.size()) {
+            std::size_t end = text.find('\n', begin);
+            if (end == std::string::npos) {
+                end = text.size();
+            }
+            context.log(text.substr(begin, end - begin));
+            begin = end + 1;
+        }
+        std::string summary = std::to_string(reading.rooms.size()) + " room" +
+                              (reading.rooms.size() == 1 ? "" : "s") + ", " +
+                              std::to_string(reading.systems.size()) + " system layer" +
+                              (reading.systems.size() == 1 ? "" : "s");
+        if (!reading.titleBlocks.empty()) {
+            summary += ", title block read";
+        }
+        return StepResult::done(summary);
+    }
+
+    StepResult supply(const InputValue& /*input*/, CommandContext& /*context*/) override {
+        return StepResult::done();
+    }
+};
+
 class ListCommand final : public CommandInstance {
 public:
     StepResult start(CommandContext& context) override {
@@ -1956,6 +1995,9 @@ std::vector<CommandDefinition> modifyCommands() {
     inquiry("cad.inquiry.list", "LIST", {"LI", "LS"}, "List",
             "Say what the selected objects are, in the history",
             [] { return std::make_unique<ListCommand>(); });
+    inquiry("cad.inquiry.describe", "DESCRIBE", {"DESC"}, "Describe",
+            "Say what the drawing shows: rooms, systems, shell and title block",
+            [] { return std::make_unique<DescribeCommand>(); });
     {
         // Measure and Divide place points, so they change the drawing and
         // are not inquiries -- but they belong with them on the ribbon.

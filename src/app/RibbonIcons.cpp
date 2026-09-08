@@ -99,6 +99,15 @@ void letterA(const Ink& ink, qreal x, qreal y, qreal h) {
              i.node(15, 15);
              i.node(21, 5);
          }},
+        // A plan read as rooms: two rooms side by side with a label line in
+        // each, the labels accented because the reading is what is reported.
+        {"DESCRIBE",
+         [](const Ink& i) {
+             i.rect(3, 5, 18, 14);
+             i.ghost(11, 5, 11, 19);
+             i.line(5, 12, 9, 12);
+             i.newLine(13, 12, 17, 12);
+         }},
         // A measured span: a line between two ticks, with the ticks accented
         // because they are the thing being picked.
         {"DIST",

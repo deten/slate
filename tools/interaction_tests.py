@@ -343,6 +343,25 @@ def test_area_of_an_open_object_reports_length(work: Path) -> None:
     expect("Area" not in log, f"an area was reported for an open shape: {log}")
 
 
+def test_describe_reads_a_labelled_room(work: Path) -> None:
+    """A 4 x 3 metre rectangle with OFFICE and 101 inside reads as one room.
+
+    DESCRIBE is what the assistant is told about the drawing, printed for the
+    person; the room's name, number and traced walls are the whole point.
+    """
+    log, _ = run(work, "describe", [
+        "--run", "RECTANGLE", "--run", "0,0", "--run", "4000,3000",
+        "--run", "TEXT", "--run", "1500,1600", "--run", "100", "--run", "0",
+        "--run", "OFFICE", "--run", "",
+        "--run", "TEXT", "--run", "1500,1400", "--run", "100", "--run", "0",
+        "--run", "101", "--run", "",
+        "--run", "DESCRIBE",
+    ], save=False)
+    expect("Rooms (1, 1 with walls traced)" in log, f"the room was not traced: {log}")
+    expect("OFFICE 101: 12 sq m, 4000 x 3000, centre 2000,1500" in log,
+           f"the room was not read: {log}")
+
+
 def polyline_vertices(path: Path) -> list[tuple[float, float]]:
     """Vertices of the first polyline, in file order."""
     text = path.read_text(encoding="utf-8", errors="replace")
@@ -1418,6 +1437,7 @@ SCENARIOS = [
     test_distance_reports_separation_and_angle,
     test_area_of_a_closed_object,
     test_area_of_an_open_object_reports_length,
+    test_describe_reads_a_labelled_room,
     test_two_hot_grips_on_one_object_stretch_together,
     test_two_hot_grips_move_the_object_once,
     test_two_midpoint_grips_each_add_a_corner,

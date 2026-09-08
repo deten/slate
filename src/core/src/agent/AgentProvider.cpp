@@ -4,6 +4,7 @@
 #include <map>
 #include <sstream>
 
+#include "cad/agent/DrawingReading.hpp"
 #include "cad/agent/DrawingStandards.hpp"
 #include "cad/command/CommandRegistry.hpp"
 #include "cad/db/BlockTableRecord.hpp"
@@ -259,6 +260,13 @@ std::string describeDrawing(const Database& db, std::span<const Handle> selectio
             out << "  " << describeEntity(db, *entity) << "\n";
             ++shown;
         }
+    }
+
+    // The drawing as rooms, systems and a title block, which is what a
+    // request about "the corridor" or "the supply main" is actually about.
+    const std::string reading = readDrawing(db).describe();
+    if (!reading.empty()) {
+        out << "\n" << reading;
     }
 
     return out.str();
