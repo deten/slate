@@ -2,8 +2,10 @@
 
 #include <algorithm>
 #include <map>
+#include <optional>
 #include <sstream>
 
+#include "cad/agent/AgentDialogue.hpp"
 #include "cad/agent/DrawingReading.hpp"
 #include "cad/agent/DrawingStandards.hpp"
 #include "cad/command/CommandRegistry.hpp"
@@ -296,6 +298,21 @@ std::string agentSystemPrompt(const CommandRegistry& registry) {
            "layer the office uses for it, with that layer's colour and linetype, and use "
            "the office's block names. Make a standard layer with LAYER if the drawing lacks "
            "it.\n\n"
+           "If you need to know more about the drawing first, answer with ASK lines instead "
+           "of commands, one per line, and you will be given the answers and asked again:\n"
+           "  ASK ROOM <name or number>   the room's walls, doors, size and what is in it\n"
+           "  ASK ROOMS                   every room, with size and position\n"
+           "  ASK LAYER <name>            what is on a layer\n"
+           "  ASK NEAR <x,y> [radius]     what is around a point\n"
+           "  ASK BLOCK <name>            what a block contains and where it is placed\n"
+           "Ask for what you will use; a few rounds are allowed.\n\n"
+           "If the request needs a decision only the user can make, ask them, once: answer "
+           "with question lines only, each starting with ? and ending with your suggested "
+           "answer in square brackets, at most four. For example:\n"
+           "? Which room is the mechanical room? [MECH. EQT. RM 6]\n"
+           "? What size is the supply main? [24x12]\n"
+           "You will be given the answers and asked again. Ask only what the drawing cannot "
+           "tell you, then answer with commands.\n\n"
            "Available commands:\n";
 
     for (const auto& [category, commands] : registry.byCategory()) {
@@ -316,7 +333,7 @@ std::string agentSystemPrompt(const CommandRegistry& registry) {
 AgentPlan requestAgentPlan(AgentProvider& provider, const std::string& instruction,
                            const Database& db, const CommandRegistry& registry,
                            std::span<const Handle> selection, std::string* error,
-                           std::string_view standards) {
+                           std::string_view standards, const AgentDialogue* dialogue) {
     AgentRequest request;
     request.system = agentSystemPrompt(registry);
     request.context = describeDrawing(db, selection);
@@ -326,17 +343,98 @@ AgentPlan requestAgentPlan(AgentProvider& provider, const std::string& instructi
     }
     request.instruction = instruction;
 
-    const AgentReply reply = provider.send(request);
-    if (!reply.ok()) {
-        if (error != nullptr) {
-            *error = reply.error;
+    const auto say = [&](const std::string& line) {
+        if (dialogue != nullptr && dialogue->transcript != nullptr) {
+            dialogue->transcript->push_back(line);
         }
-        return {};
-    }
+    };
 
-    AgentPlan plan = parseAgentPlan(reply.text);
-    validateAgentPlan(plan, registry);
-    return plan;
+    // The reading the answers come from, made once, and only if asked for.
+    std::optional<DrawingReading> reading;
+    int factRounds = 0;
+    bool askedTheUser = false;
+    for (;;) {
+        const AgentReply reply = provider.send(request);
+        if (!reply.ok()) {
+            if (error != nullptr) {
+                *error = reply.error;
+            }
+            return {};
+        }
+
+        const AgentTurnReading turn = readAgentTurn(reply.text);
+        const int allowedRounds = dialogue == nullptr ? 0 : dialogue->factRounds;
+
+        if (turn.asksTheDrawing() && factRounds < allowedRounds) {
+            ++factRounds;
+            if (!reading.has_value()) {
+                reading = readDrawing(db);
+            }
+            std::string answers;
+            for (const AgentQuery& query : turn.queries) {
+                say("Asked: " + query.source);
+                answers += query.source + "\n" + answerAgentQuery(db, *reading, query) + "\n";
+            }
+            request.history.push_back(AgentTurn{true, reply.text});
+            request.history.push_back(
+                AgentTurn{false, "The answers:\n\n" + answers + "Now answer the request."});
+            continue;
+        }
+
+        if (turn.asksTheUser()) {
+            if (askedTheUser) {
+                // Once is the deal. A model that asks again is out of ideas,
+                // and the user has already said what they know.
+                AgentPlan plan;
+                plan.summary = "The assistant asked more questions instead of answering.";
+                for (const AgentQuestion& question : turn.questions) {
+                    plan.refused.push_back("? " + question.text);
+                }
+                return plan;
+            }
+            askedTheUser = true;
+            std::vector<std::string> answers;
+            if (dialogue != nullptr && dialogue->answer) {
+                const std::optional<std::vector<std::string>> given =
+                    dialogue->answer(turn.questions);
+                if (!given.has_value()) {
+                    if (error != nullptr) {
+                        *error = "Cancelled at the assistant's questions.";
+                    }
+                    return {};
+                }
+                answers = *given;
+            }
+            std::string text = "The answers:\n";
+            for (std::size_t i = 0; i < turn.questions.size(); ++i) {
+                const AgentQuestion& question = turn.questions[i];
+                std::string answer = i < answers.size() ? answers[i] : std::string{};
+                if (answer.empty()) {
+                    answer = question.suggested;
+                }
+                say("? " + question.text + " -> " + answer);
+                text += "- " + question.text + " " + answer + "\n";
+            }
+            request.history.push_back(AgentTurn{true, reply.text});
+            request.history.push_back(AgentTurn{false, text + "Now answer the request."});
+            continue;
+        }
+
+        AgentPlan plan = parseAgentPlan(reply.text);
+        if (turn.asksTheDrawing()) {
+            // Out of rounds: the questions are reported, not silently
+            // dropped as commands that do not exist.
+            plan.commands.erase(
+                std::remove_if(plan.commands.begin(), plan.commands.end(),
+                               [](const AgentCommand& command) { return command.name == "ASK"; }),
+                plan.commands.end());
+            for (const AgentQuery& query : turn.queries) {
+                plan.refused.push_back(query.source + " (no more questions were allowed)");
+            }
+        }
+        validateAgentPlan(plan, registry);
+        return plan;
+    }
 }
 
 }  // namespace cad

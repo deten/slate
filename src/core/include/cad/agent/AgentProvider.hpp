@@ -3,7 +3,9 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <vector>
 
+#include "cad/agent/AgentDialogue.hpp"
 #include "cad/agent/AgentPlan.hpp"
 #include "cad/db/Handle.hpp"
 
@@ -11,6 +13,13 @@ namespace cad {
 
 class CommandRegistry;
 class Database;
+
+/// One thing said after the first request: the model's reply, or what was
+/// sent back to it -- the answers to its questions.
+struct AgentTurn {
+    bool fromModel = false;
+    std::string text;
+};
 
 /// What is sent to an agent.
 struct AgentRequest {
@@ -21,6 +30,10 @@ struct AgentRequest {
     std::string context;
     /// What the user asked for, in their own words.
     std::string instruction;
+    /// The exchange so far, oldest first, when this is a follow-up. A
+    /// transport sends the first request and then these, alternating, so
+    /// the model sees what it asked and what it was told.
+    std::vector<AgentTurn> history;
 };
 
 /// What came back.
@@ -78,11 +91,17 @@ public:
 /// Ask an agent for a plan: build the request, send it, read and check the
 /// reply. Nothing is applied -- see `applyAgentPlan` -- so a caller can show
 /// the plan and ask before anything touches the drawing.
+///
+/// With a dialogue, a reply that asks Slate for facts is answered and sent
+/// back, up to the dialogue's fact rounds, and a reply that asks the user
+/// questions is put to the dialogue's answerer once. A second round of
+/// questions is refused and reported in the plan, not asked.
 [[nodiscard]] AgentPlan requestAgentPlan(AgentProvider& provider,
                                          const std::string& instruction, const Database& db,
                                          const CommandRegistry& registry,
                                          std::span<const Handle> selection,
                                          std::string* error,
-                                         std::string_view standards = {});
+                                         std::string_view standards = {},
+                                         const AgentDialogue* dialogue = nullptr);
 
 }  // namespace cad

@@ -184,6 +184,20 @@ enum class ShellPart { None, Wall, Door, Window };
 
 }  // namespace
 
+std::string shellPartNameOf(std::string_view layerName) {
+    switch (shellPartOf(layerName)) {
+        case ShellPart::Wall:
+            return "wall";
+        case ShellPart::Door:
+            return "door";
+        case ShellPart::Window:
+            return "window";
+        case ShellPart::None:
+            break;
+    }
+    return {};
+}
+
 double SystemReading::totalRunLength() const {
     double total = 0.0;
     for (const RunReading& run : runs) {

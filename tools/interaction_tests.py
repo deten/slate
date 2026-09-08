@@ -800,6 +800,33 @@ def test_the_plan_is_shown_before_it_runs(work: Path) -> None:
            f"the step was applied without being reported:\n{log}")
 
 
+def test_the_assistant_can_ask_for_facts_and_ask_the_user(work: Path) -> None:
+    """A canned exchange in three parts: the model asks Slate about a room,
+    then asks the user a question, then answers with a command.
+
+    A scripted run has no one to answer, so the question takes its own
+    suggestion; the history shows both what was asked and what was told.
+    """
+    reply = canned(work, "converse",
+                   "```\nASK ROOM OFFICE\n```\n"
+                   "===\n"
+                   "? Which way should the duct run? [east to west]\n"
+                   "===\n"
+                   "```\nLINE 0,150 400,150\n```\n")
+    log, saved = run(work, "agent-converse", [
+        "--run", "RECTANGLE", "--run", "0,0", "--run", "400,300",
+        "--run", "TEXT", "--run", "150,160", "--run", "10", "--run", "0",
+        "--run", "OFFICE", "--run", "",
+        "--agent-reply", str(reply),
+        "--agent", "run a duct through the office",
+    ])
+    expect("Asked: ASK ROOM OFFICE" in log, f"the fact round was not logged:\n{log}")
+    expect("? Which way should the duct run? -> east to west" in log,
+           f"the question did not take its suggestion:\n{log}")
+    expect("1 of 1 step(s) completed" in log, f"the final plan did not run:\n{log}")
+    expect(len(lines_in(saved)) == 1, "the duct line was not drawn")
+
+
 def test_the_assistant_learns_house_standards_from_a_reference_folder(work: Path) -> None:
     """A folder of the office's drawings teaches the layers it uses.
 
@@ -1438,6 +1465,7 @@ SCENARIOS = [
     test_area_of_a_closed_object,
     test_area_of_an_open_object_reports_length,
     test_describe_reads_a_labelled_room,
+    test_the_assistant_can_ask_for_facts_and_ask_the_user,
     test_two_hot_grips_on_one_object_stretch_together,
     test_two_hot_grips_move_the_object_once,
     test_two_midpoint_grips_each_add_a_corner,

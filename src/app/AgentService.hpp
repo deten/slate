@@ -7,6 +7,7 @@
 
 #include "HttpAgentProvider.hpp"
 #include "ReferenceLibrary.hpp"
+#include "cad/agent/AgentDialogue.hpp"
 #include "cad/agent/AgentPlan.hpp"
 
 namespace cad {
@@ -78,6 +79,11 @@ public:
     void useCannedReply(const QString& path) { canned_ = path; }
     [[nodiscard]] bool isCanned() const { return !canned_.isEmpty(); }
 
+    /// How the assistant's questions reach the user. Without one, each
+    /// question is taken as answered with the assistant's own suggestion,
+    /// which is what a scripted run wants and what the console gets.
+    void answerQuestionsWith(AgentAnswerer answerer) { questions_ = std::move(answerer); }
+
     /// Learn from this folder for this run, whatever the settings say.
     void useReferenceDirectory(const QString& directory) { referenceOverride_ = directory; }
     [[nodiscard]] QString referenceDirectory() const;
@@ -105,6 +111,7 @@ private:
     ReferenceLibrary library_;
     QString canned_;
     QString referenceOverride_;
+    AgentAnswerer questions_;
 };
 
 }  // namespace cad::app

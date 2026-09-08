@@ -3,8 +3,14 @@
 #include <string>
 #include <vector>
 
+#include <optional>
+
+#include "cad/agent/AgentDialogue.hpp"
 #include "cad/agent/AgentPlan.hpp"
 #include "cad/agent/AgentProvider.hpp"
+#include "cad/agent/DrawingReading.hpp"
+#include "cad/db/Layer.hpp"
+#include "cad/db/TextEntities.hpp"
 #include "cad/command/CommandExecutor.hpp"
 #include "cad/command/CommandRegistry.hpp"
 #include "cad/command/StandardCommands.hpp"
@@ -288,6 +294,237 @@ TEST_CASE("everything an agent does can be undone") {
     CHECK(h.entityCount() == 1);
     CHECK(h.transactions.undo());
     CHECK(h.entityCount() == 0);
+}
+
+// ----------------------------------------------------------------- dialogue
+
+namespace {
+
+/// A provider that answers from a list, one reply per call, and keeps every
+/// request it was sent so the conversation can be checked turn by turn.
+class ConversingProvider final : public AgentProvider {
+public:
+    explicit ConversingProvider(std::vector<std::string> replies) : replies_(std::move(replies)) {}
+    [[nodiscard]] std::string name() const override { return "conversing"; }
+    [[nodiscard]] AgentReply send(const AgentRequest& request) override {
+        requests.push_back(request);
+        AgentReply reply;
+        const std::size_t index = std::min(requests.size() - 1, replies_.size() - 1);
+        reply.text = replies_[index];
+        return reply;
+    }
+    std::vector<AgentRequest> requests;
+
+private:
+    std::vector<std::string> replies_;
+};
+
+/// A drawing with one enclosed, labelled room and a duct run.
+struct RoomHarness : Harness {
+    RoomHarness() {
+        db->settings.insertionUnits = DrawingUnits::Inches;
+        Layer& walls = db->ensureLayer("A-WALL");
+        const Vec3 corners[] = {{0, 0, 0}, {400, 0, 0}, {400, 300, 0}, {0, 300, 0}};
+        for (int i = 0; i < 4; ++i) {
+            auto line = std::make_unique<LineEntity>(corners[i], corners[(i + 1) % 4]);
+            line->layerHandle = walls.handle;
+            db->addToModelSpace(std::move(line));
+        }
+        db->addToModelSpace(std::make_unique<TextEntity>(Vec3{200, 160, 0}, "OFFICE", 10.0));
+        db->addToModelSpace(std::make_unique<TextEntity>(Vec3{200, 140, 0}, "101", 10.0));
+        Layer& duct = db->ensureLayer("M-DUCT-SUPP");
+        const Vec3 run[] = {{50, 250, 0}, {350, 250, 0}};
+        auto polyline = std::make_unique<PolylineEntity>(PolylineEntity::fromPoints(run));
+        polyline->constantWidth = 12.0;
+        polyline->layerHandle = duct.handle;
+        db->addToModelSpace(std::move(polyline));
+    }
+};
+
+}  // namespace
+
+TEST_CASE("questions and queries are read out of a reply, fenced or not") {
+    const AgentTurnReading turn = readAgentTurn(
+        "I need to know more.\n"
+        "```\n"
+        "ASK ROOM CONF. #1\n"
+        "ask layer M-DUCT-SUPP\n"
+        "```\n"
+        "? Which room is the mechanical room? [MECH. EQT. RM 6]\n"
+        "? What size is the main?\n");
+    REQUIRE(turn.queries.size() == 2);
+    CHECK(turn.queries[0].kind == "ROOM");
+    CHECK(turn.queries[0].argument == "CONF. #1");
+    CHECK(turn.queries[1].kind == "LAYER");
+    CHECK(turn.queries[1].argument == "M-DUCT-SUPP");
+    REQUIRE(turn.questions.size() == 2);
+    CHECK(turn.questions[0].text == "Which room is the mechanical room?");
+    CHECK(turn.questions[0].suggested == "MECH. EQT. RM 6");
+    CHECK(turn.questions[1].text == "What size is the main?");
+    CHECK(turn.questions[1].suggested.empty());
+
+    const AgentTurnReading plain = readAgentTurn("```\nLINE 0,0 1,1\n```\n");
+    CHECK_FALSE(plain.asksTheUser());
+    CHECK_FALSE(plain.asksTheDrawing());
+}
+
+TEST_CASE("a query is answered from the drawing") {
+    RoomHarness h;
+    const DrawingReading reading = readDrawing(*h.db);
+
+    const std::string room = answerAgentQuery(*h.db, reading, AgentQuery{"ASK ROOM office", "ROOM", "office"});
+    CHECK(room.find("OFFICE 101: 833 sq ft") != std::string::npos);
+    CHECK(room.find("Bounded by 4 objects") != std::string::npos);
+    CHECK(room.find("Line from 0,0 to 400,0") != std::string::npos);
+    // The duct crosses the room, so it is inside.
+    CHECK(room.find("Inside (1): 1 x Polyline") != std::string::npos);
+
+    const std::string missing = answerAgentQuery(*h.db, reading, AgentQuery{"ASK ROOM lab", "ROOM", "lab"});
+    CHECK(missing.find("No room called \"lab\"") != std::string::npos);
+    CHECK(missing.find("OFFICE 101") != std::string::npos);
+
+    const std::string layer = answerAgentQuery(*h.db, reading, AgentQuery{"ASK LAYER a-wall", "LAYER", "a-wall"});
+    CHECK(layer.find("On layer a-wall (4): 4 x Line") != std::string::npos);
+
+    const std::string near = answerAgentQuery(*h.db, reading, AgentQuery{"ASK NEAR 0,0 10", "NEAR", "0,0 10"});
+    CHECK(near.find("Within 10 of 0,0 (2)") != std::string::npos);
+
+    const std::string bad = answerAgentQuery(*h.db, reading, AgentQuery{"ASK WEATHER", "WEATHER", ""});
+    CHECK(bad.find("Unknown question") != std::string::npos);
+
+    const std::string rooms = answerAgentQuery(*h.db, reading, AgentQuery{"ASK ROOMS", "ROOMS", ""});
+    CHECK(rooms.find("Rooms (1):") != std::string::npos);
+}
+
+TEST_CASE("a model that asks for facts is answered and asked again") {
+    RoomHarness h;
+    ConversingProvider provider{{
+        "```\nASK ROOM OFFICE\n```\n",
+        "```\nLINE 0,150 400,150\n```\n",
+    }};
+    std::vector<std::string> transcript;
+    AgentDialogue dialogue;
+    dialogue.transcript = &transcript;
+    std::string error;
+    const AgentPlan plan = requestAgentPlan(provider, "run a duct through the office", *h.db,
+                                            h.registry, {}, &error, {}, &dialogue);
+    CHECK(error.empty());
+    REQUIRE(plan.commands.size() == 1);
+    CHECK(plan.commands[0].name == "LINE");
+
+    REQUIRE(provider.requests.size() == 2);
+    // The second request carries what the model asked and what it was told.
+    const AgentRequest& second = provider.requests[1];
+    REQUIRE(second.history.size() == 2);
+    CHECK(second.history[0].fromModel);
+    CHECK(second.history[0].text.find("ASK ROOM OFFICE") != std::string::npos);
+    CHECK_FALSE(second.history[1].fromModel);
+    CHECK(second.history[1].text.find("OFFICE 101: 833 sq ft") != std::string::npos);
+    CHECK(second.history[1].text.find("Now answer the request.") != std::string::npos);
+    REQUIRE(transcript.size() == 1);
+    CHECK(transcript[0] == "Asked: ASK ROOM OFFICE");
+}
+
+TEST_CASE("without a dialogue a query is refused rather than run as a command") {
+    RoomHarness h;
+    ConversingProvider provider{{"```\nASK ROOM OFFICE\nLINE 0,0 1,1\n```\n"}};
+    std::string error;
+    const AgentPlan plan = requestAgentPlan(provider, "anything", *h.db, h.registry, {}, &error);
+    CHECK(provider.requests.size() == 1);
+    REQUIRE(plan.commands.size() == 1);
+    CHECK(plan.commands[0].name == "LINE");
+    REQUIRE(plan.refused.size() == 1);
+    CHECK(plan.refused[0].find("ASK ROOM OFFICE") != std::string::npos);
+}
+
+TEST_CASE("the model's questions go to the user once, with suggestions as defaults") {
+    RoomHarness h;
+    ConversingProvider provider{{
+        "? Which way should the duct run? [east to west]\n"
+        "? What width? [12]\n",
+        "```\nLINE 0,150 400,150\n```\n",
+    }};
+    std::vector<AgentQuestion> asked;
+    AgentDialogue dialogue;
+    dialogue.answer = [&](const std::vector<AgentQuestion>& questions) {
+        asked = questions;
+        // The first is answered, the second left to the suggestion.
+        return std::optional<std::vector<std::string>>{{"north to south", ""}};
+    };
+    std::vector<std::string> transcript;
+    dialogue.transcript = &transcript;
+    std::string error;
+    const AgentPlan plan = requestAgentPlan(provider, "add a duct", *h.db, h.registry, {}, &error,
+                                            {}, &dialogue);
+    CHECK(error.empty());
+    REQUIRE(asked.size() == 2);
+    CHECK(asked[1].suggested == "12");
+    REQUIRE(plan.commands.size() == 1);
+    REQUIRE(provider.requests.size() == 2);
+    const std::string& told = provider.requests[1].history[1].text;
+    CHECK(told.find("Which way should the duct run? north to south") != std::string::npos);
+    CHECK(told.find("What width? 12") != std::string::npos);
+    REQUIRE(transcript.size() == 2);
+    CHECK(transcript[0] == "? Which way should the duct run? -> north to south");
+}
+
+TEST_CASE("questions with no one to answer them take their suggestions") {
+    RoomHarness h;
+    ConversingProvider provider{{"? What width? [12]\n", "```\nLINE 0,0 1,1\n```\n"}};
+    AgentDialogue dialogue;
+    std::string error;
+    const AgentPlan plan = requestAgentPlan(provider, "add a duct", *h.db, h.registry, {}, &error,
+                                            {}, &dialogue);
+    CHECK(plan.commands.size() == 1);
+    CHECK(provider.requests[1].history[1].text.find("What width? 12") != std::string::npos);
+}
+
+TEST_CASE("cancelling the questions cancels the request") {
+    RoomHarness h;
+    ConversingProvider provider{{"? What width? [12]\n", "```\nLINE 0,0 1,1\n```\n"}};
+    AgentDialogue dialogue;
+    dialogue.answer = [](const std::vector<AgentQuestion>&) {
+        return std::optional<std::vector<std::string>>{};
+    };
+    std::string error;
+    const AgentPlan plan = requestAgentPlan(provider, "add a duct", *h.db, h.registry, {}, &error,
+                                            {}, &dialogue);
+    CHECK(plan.empty());
+    CHECK(error.find("Cancelled") != std::string::npos);
+    CHECK(provider.requests.size() == 1);
+}
+
+TEST_CASE("a second round of questions is refused, not asked") {
+    RoomHarness h;
+    ConversingProvider provider{{"? First? [a]\n", "? Second? [b]\n", "```\nLINE 0,0 1,1\n```\n"}};
+    int askedTimes = 0;
+    AgentDialogue dialogue;
+    dialogue.answer = [&](const std::vector<AgentQuestion>&) {
+        ++askedTimes;
+        return std::optional<std::vector<std::string>>{{"a"}};
+    };
+    std::string error;
+    const AgentPlan plan = requestAgentPlan(provider, "add a duct", *h.db, h.registry, {}, &error,
+                                            {}, &dialogue);
+    CHECK(askedTimes == 1);
+    CHECK(plan.empty());
+    REQUIRE(plan.refused.size() == 1);
+    CHECK(plan.refused[0] == "? Second?");
+    CHECK(provider.requests.size() == 2);
+}
+
+TEST_CASE("fact rounds are bounded") {
+    RoomHarness h;
+    ConversingProvider provider{{"ASK ROOMS\n"}};
+    AgentDialogue dialogue;
+    dialogue.factRounds = 2;
+    std::string error;
+    const AgentPlan plan = requestAgentPlan(provider, "anything", *h.db, h.registry, {}, &error,
+                                            {}, &dialogue);
+    CHECK(provider.requests.size() == 3);
+    CHECK(plan.empty());
+    REQUIRE(plan.refused.size() == 1);
+    CHECK(plan.refused[0].find("no more questions") != std::string::npos);
 }
 
 }  // TEST_SUITE

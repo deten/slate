@@ -128,6 +128,9 @@ struct DrawingReading {
 /// names, or "" when the name says nothing about it.
 [[nodiscard]] std::string systemStatusOf(std::string_view layerName);
 
+/// "wall", "door" or "window" for a layer named for one of them, else "".
+[[nodiscard]] std::string shellPartNameOf(std::string_view layerName);
+
 /// Whether a piece of text reads as a room name rather than a note, a tag or
 /// a number: "OFFICE", "CONF. #1", "STAFF WORK AREA" yes; "T", "CFM", "150",
 /// "AHU-1" no.

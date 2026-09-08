@@ -6,6 +6,10 @@
 #include <functional>
 
 #include <QProgressDialog>
+#include <QDialog>
+#include <QDialogButtonBox>
+#include <QFormLayout>
+#include <QLineEdit>
 #include <QAction>
 #include <QActionGroup>
 #include <QCloseEvent>
@@ -1835,6 +1839,40 @@ bool MainWindow::showRibbonTab(const QString& title) {
 AgentService& MainWindow::ensureAgent() {
     if (agent_ == nullptr) {
         agent_ = std::make_unique<AgentService>(config_, translator_.get(), settingsDirectory());
+        // The assistant may ask the user a round of questions before it
+        // answers. In a window they get a small form, each answer filled in
+        // with the assistant's own suggestion so accepting is one click; a
+        // scripted run has no one to ask and takes the suggestions.
+        if (!nonInteractive_) {
+            agent_->answerQuestionsWith(
+                [this](const std::vector<AgentQuestion>& questions)
+                    -> std::optional<std::vector<std::string>> {
+                    QDialog dialog{this};
+                    dialog.setWindowTitle(tr("The assistant asks"));
+                    auto* layout = new QFormLayout{&dialog};
+                    std::vector<QLineEdit*> edits;
+                    for (const AgentQuestion& question : questions) {
+                        auto* edit = new QLineEdit{QString::fromStdString(question.suggested),
+                                                   &dialog};
+                        edit->setMinimumWidth(320);
+                        layout->addRow(QString::fromStdString(question.text), edit);
+                        edits.push_back(edit);
+                    }
+                    auto* buttons = new QDialogButtonBox{
+                        QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog};
+                    connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+                    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+                    layout->addRow(buttons);
+                    if (dialog.exec() != QDialog::Accepted) {
+                        return std::nullopt;
+                    }
+                    std::vector<std::string> answers;
+                    for (const QLineEdit* edit : edits) {
+                        answers.push_back(edit->text().trimmed().toStdString());
+                    }
+                    return answers;
+                });
+        }
     }
     return *agent_;
 }

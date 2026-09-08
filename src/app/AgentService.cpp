@@ -1,8 +1,11 @@
 #include "AgentService.hpp"
 
+#include <algorithm>
+
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QRegularExpression>
 
 #include "Document.hpp"
 #include "cad/agent/AgentProvider.hpp"
@@ -26,7 +29,17 @@ AgentReply CannedAgentProvider::send(const AgentRequest& request) {
                           .toStdString();
         return reply;
     }
-    reply.text = QString::fromUtf8(file.readAll()).toStdString();
+    // One file may script a whole exchange: replies separated by a line of
+    // three or more equals signs, served in order as the conversation grows.
+    // The last one is repeated if the exchange runs longer than the script.
+    const QStringList replies = QString::fromUtf8(file.readAll())
+                                    .split(QRegularExpression{QStringLiteral("(?m)^={3,}\\s*$")});
+    int modelTurns = 0;
+    for (const AgentTurn& turn : request.history) {
+        modelTurns += turn.fromModel ? 1 : 0;
+    }
+    const int index = std::min(modelTurns, static_cast<int>(replies.size()) - 1);
+    reply.text = replies.value(std::max(index, 0)).toStdString();
     return reply;
 }
 
@@ -113,8 +126,18 @@ AgentOutcome AgentService::propose(const QString& instruction, Document& documen
     const std::string house = standards(&outcome.log).toStdString();
     std::string error;
     const std::vector<Handle> selection = document.selection();
+    // The back-and-forth: facts answered from the drawing, questions put to
+    // whoever is set up to answer them, and all of it logged so the history
+    // shows what the assistant asked and what it was told.
+    std::vector<std::string> transcript;
+    AgentDialogue dialogue;
+    dialogue.answer = questions_;
+    dialogue.transcript = &transcript;
     outcome.plan = requestAgentPlan(*provider, instruction.toStdString(), document.db(),
-                                    document.commands(), selection, &error, house);
+                                    document.commands(), selection, &error, house, &dialogue);
+    for (const std::string& line : transcript) {
+        outcome.log << QString::fromStdString(line);
+    }
     if (!error.empty()) {
         outcome.error = redactKey(QString::fromStdString(error), settings_.key);
         return outcome;

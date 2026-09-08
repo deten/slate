@@ -65,6 +65,38 @@ not find gets no duct; a room it found in the wrong place gets one there.
 Tracing walls stops after two seconds on a very large plan and the rest of
 the rooms are reported by their labels.
 
+## Asking before answering
+
+The reading above is a summary. A model laying out a duct needs the walls of
+one room, not a list of every room, so it may ask Slate for facts instead
+of answering, and it is answered and asked again:
+
+```
+ASK ROOM CONF. #1        the room's walls, doors, size and what is in it
+ASK ROOMS                every room, with size and position
+ASK LAYER M-DUCT-SUPP    what is on a layer
+ASK NEAR 1200,1400 100   what is around a point
+ASK BLOCK DIFF           what a block contains and where it is placed
+```
+
+A few rounds of this are allowed per request. Each question and its answer
+go in the history, so what the assistant was told is on record.
+
+Some things the drawing cannot say: which of two rooms is the mechanical
+room, what size the main should be. For those the model may ask *you*, once,
+with the answer it would assume:
+
+```
+? Which room is the mechanical room? [MECH. EQT. RM 6]
+? What size is the supply main? [24x12]
+```
+
+The questions come up as a small form with the suggestions filled in, so
+accepting them is one click and changing one is typing over it. Cancel
+cancels the request. A model that asks a second round instead of answering
+is refused, and its questions are reported rather than put to you again. In
+a scripted run there is no one to ask, and the suggestions are taken.
+
 ## Setting it up
 
 **Tools > AI Assistant…**

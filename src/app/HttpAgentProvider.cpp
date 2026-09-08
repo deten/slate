@@ -196,23 +196,31 @@ AgentReply HttpAgentProvider::send(const AgentRequest& request) {
     QNetworkRequest http{QUrl{settings_.endpoint}};
     http.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
 
+    // The first message, then the exchange so far: what the model asked and
+    // what it was told, in turn, so a follow-up reads as one conversation in
+    // either API's shape.
+    const auto turn = [](const QString& role, const QString& content) {
+        QJsonObject message;
+        message.insert(QStringLiteral("role"), role);
+        message.insert(QStringLiteral("content"), content);
+        return message;
+    };
+    QJsonArray messages;
+    messages.append(turn(QStringLiteral("user"), instruction));
+    for (const AgentTurn& said : request.history) {
+        messages.append(turn(said.fromModel ? QStringLiteral("assistant") : QStringLiteral("user"),
+                             QString::fromStdString(said.text)));
+    }
+
     if (settings_.api == AgentApi::Anthropic) {
         body.insert(QStringLiteral("max_tokens"), 2048);
         body.insert(QStringLiteral("system"), QString::fromStdString(request.system));
-        QJsonObject message;
-        message.insert(QStringLiteral("role"), QStringLiteral("user"));
-        message.insert(QStringLiteral("content"), instruction);
-        body.insert(QStringLiteral("messages"), QJsonArray{message});
+        body.insert(QStringLiteral("messages"), messages);
         http.setRawHeader("x-api-key", settings_.key.toUtf8());
         http.setRawHeader("anthropic-version", "2023-06-01");
     } else {
-        QJsonObject system;
-        system.insert(QStringLiteral("role"), QStringLiteral("system"));
-        system.insert(QStringLiteral("content"), QString::fromStdString(request.system));
-        QJsonObject message;
-        message.insert(QStringLiteral("role"), QStringLiteral("user"));
-        message.insert(QStringLiteral("content"), instruction);
-        body.insert(QStringLiteral("messages"), QJsonArray{system, message});
+        messages.prepend(turn(QStringLiteral("system"), QString::fromStdString(request.system)));
+        body.insert(QStringLiteral("messages"), messages);
         http.setRawHeader("Authorization", "Bearer " + settings_.key.toUtf8());
     }
 

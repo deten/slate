@@ -69,6 +69,7 @@ add_library(cad_core STATIC
     src/agent/AgentProvider.cpp
     src/agent/DrawingStandards.cpp
     src/agent/DrawingReading.cpp
+    src/agent/AgentDialogue.cpp
     src/command/CommandRegistry.cpp
     src/command/TypedInput.cpp
     src/command/CommandConfig.cpp
