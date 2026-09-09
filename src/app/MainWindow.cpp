@@ -345,6 +345,7 @@ void MainWindow::buildUi() {
     connect(projectPanel_, &ProjectPanel::editRequested, this, &MainWindow::onProject);
     connect(projectPanel_, &ProjectPanel::attachBackgroundRequested, this,
             [this] { attachBackground(QString{}); });
+    connect(projectPanel_, &ProjectPanel::checkRequested, this, &MainWindow::checkProject);
 
     coordinateLabel_ = new QLabel{"0.000, 0.000", this};
     zoomLabel_ = new QLabel{"100%", this};
@@ -2046,6 +2047,24 @@ void MainWindow::attachBackground(const QString& name) {
     canvas_->update();
     updateWindowTitle();
     onCommandStateChanged();
+}
+
+void MainWindow::checkProject() {
+    if (project_ == nullptr || !project_->isOpen()) {
+        log(tr("! No project is open."));
+        return;
+    }
+    const QStringList findings = project_->check();
+    if (findings.isEmpty()) {
+        log(tr("Set checked: %n sheet(s), nothing wrong.", "",
+               static_cast<int>(project_->project().sheets.size())));
+    } else {
+        log(tr("Set checked: %n problem(s).", "", static_cast<int>(findings.size())));
+        for (const QString& finding : findings) {
+            log(tr("  ! %1").arg(finding));
+        }
+    }
+    refreshProjectPanel();
 }
 
 AgentService& MainWindow::ensureAgent() {
@@ -3798,6 +3817,15 @@ AttachHooks MainWindow::attachHooks() {
     AttachHooks hooks;
     hooks.xref = [this](const std::string& path, bool overlay, Handle* block) {
         return attachExternalReference(path, overlay, block);
+    };
+    hooks.sheetList = [this] {
+        std::vector<std::pair<std::string, std::string>> sheets;
+        if (project_ != nullptr && project_->isOpen()) {
+            for (const ProjectSheet& sheet : project_->project().sheets) {
+                sheets.emplace_back(sheet.number, sheet.title);
+            }
+        }
+        return sheets;
     };
     hooks.pdfPages = [](const std::string& path, int* pages) -> std::string {
         const QString file = QString::fromStdString(path);

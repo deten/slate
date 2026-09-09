@@ -2,6 +2,7 @@
 
 #include <functional>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "cad/command/CommandRegistry.hpp"
@@ -38,6 +39,9 @@ using AttachXrefHook =
 /// in words, or an empty string and the answer through its pointers.
 struct AttachHooks {
     AttachXrefHook xref;
+    /// The project's sheets, number and title in order, for the index
+    /// sheet. Empty when no project is open.
+    std::function<std::vector<std::pair<std::string, std::string>>()> sheetList;
     /// How many pages a PDF has.
     std::function<std::string(const std::string& path, int* pages)> pdfPages;
     /// A page's size in points, pages counted from one.

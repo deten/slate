@@ -95,6 +95,13 @@ public:
     [[nodiscard]] bool siblingPlacement(const ProjectBackground& background,
                                         const QString& exceptFile, Placement* placement);
 
+    /// What is wrong with the set, from the list and the sheets' readings:
+    /// a file missing, a number listed twice, a title block that says a
+    /// different number or title than the list, a sheet listed with a
+    /// background it does not reference, a background newer than a sheet
+    /// that uses it. One line each; empty when all is well.
+    [[nodiscard]] QStringList check();
+
 private:
     struct Entry {
         QString key;

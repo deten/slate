@@ -965,6 +965,50 @@ def test_a_background_is_overlaid_the_office_way(work: Path) -> None:
     expect(len(records(folder / "M2.1.dxf", "INSERT")) == 1, "the reference was not placed once")
 
 
+def test_the_set_is_checked_and_the_index_sheet_is_written_from_the_list(work: Path) -> None:
+    """Three things wrong with a set are found: a missing file, a title
+    block that says another number, a sheet listed with a background it
+    does not reference. Then the index is placed as text rows from the list."""
+    folder = work / "checkset"
+    folder.mkdir(exist_ok=True)
+    # M3.1's title block still says X-0: a file copied and never retitled.
+    minimal_title_block_template(folder / "M3.1.dxf")
+    run(work, "check-bg", [
+        "--run", "LINE", "--run", "0,0", "--run", "4000,0", "--run", "",
+        "--save-as", str(folder / "A1.1.dxf"),
+    ], save=False)
+    run(work, "check-m1", [
+        "--run", "LINE", "--run", "0,0", "--run", "100,100", "--run", "",
+        "--save-as", str(folder / "M1.1.dxf"),
+    ], save=False)
+    (folder / "project.slate").write_text(
+        "project: Checked Set\n"
+        "discipline: M\n"
+        "background: A1.1 | A1.1.dxf\n"
+        "sheet: M0.1 | Index | M0.1.dxf |  |  |\n"
+        "sheet: M1.1 | Plan | M1.1.dxf |  | A1.1 |\n"
+        "sheet: M3.1 | Details | M3.1.dxf |  |  |\n", encoding="utf-8")
+    log, _ = run(work, "check-run", [
+        "--project", str(folder / "project.slate"), "--check-project",
+    ], save=False)
+    expect("Set checked: 3 problem(s)." in log, f"expected three findings:\n{log}")
+    expect("M0.1: file missing (M0.1.dxf)" in log, f"the missing file was not found:\n{log}")
+    expect("M3.1: its title block says SHEET = X-0" in log,
+           f"the wrong title block was not found:\n{log}")
+    expect("M1.1: listed with background A1.1 but references nothing" in log,
+           f"the unreferenced background was not found:\n{log}")
+
+    # The index sheet: rows of number and title from the list.
+    log, saved = run(work, "check-index", [
+        "--project", str(folder / "project.slate"),
+        "--run", "SHEETINDEX", "--run", "0,500", "--run", "25",
+    ])
+    expect("Index of 3 sheets placed" in log, f"the index was not placed:\n{log}")
+    texts = [r.get("1") for r in records(saved, "TEXT")]
+    expect(texts == ["M0.1", "Index", "M1.1", "Plan", "M3.1", "Details"],
+           f"the index rows are wrong: {texts}")
+
+
 def test_the_assistant_learns_house_standards_from_a_reference_folder(work: Path) -> None:
     """A folder of the office's drawings teaches the layers it uses.
 
@@ -1607,6 +1651,7 @@ SCENARIOS = [
     test_a_project_beside_the_drawing_is_told_to_the_assistant,
     test_sheet_files_are_made_from_the_template_with_the_title_block_filled,
     test_a_background_is_overlaid_the_office_way,
+    test_the_set_is_checked_and_the_index_sheet_is_written_from_the_list,
     test_two_hot_grips_on_one_object_stretch_together,
     test_two_hot_grips_move_the_object_once,
     test_two_midpoint_grips_each_add_a_corner,

@@ -123,6 +123,8 @@ public:
     /// project's frozen layers frozen. An empty name means the background
     /// the open sheet is listed with.
     void attachBackground(const QString& name);
+    /// Check the set and put the findings in the history.
+    void checkProject();
     /// Print what the assistant would be told, without asking it.
     void showAgentContext();
     /// The assistant, made on first use.

@@ -34,6 +34,8 @@ Q_SIGNALS:
     void editRequested();
     /// The user wants the open sheet's background overlaid the office way.
     void attachBackgroundRequested();
+    /// The user wants the set checked and the findings in the history.
+    void checkRequested();
 
 private:
     void onItemActivated(QTreeWidgetItem* item, int column);

@@ -109,6 +109,32 @@ overlays the open sheet's background the office way:
 The panel also says when a background's file is newer than a sheet that
 uses it, which is when the sheet needs a look.
 
+## Checking the set
+
+**Check set** in the Project panel looks for what is wrong with the set
+and puts it in the history, one line each:
+
+- a sheet's file is missing;
+- a number is listed twice;
+- a sheet's title block says a different number than the list, which is
+  what a file copied from its neighbour and never retitled looks like;
+- a sheet is listed with a background it does not reference, or the
+  background could not be found when the sheet was read;
+- a background's file is missing, or is newer than a sheet that uses it.
+
+The same findings go to the assistant with the project, under "Problems
+with the set", so it can be asked to put them right. In a scripted run,
+`--check-project` prints them.
+
+## The index sheet
+
+**SHEETINDEX** (alias INDEX) places the sheet list as rows of text: the
+number in one column, the title in the next, from a corner you pick, at a
+text height you give. They are ordinary TEXT on the current layer, so they
+move, edit and undo like any other text. When the list changes, erase the
+rows and place the index again; it is written from the list, so it cannot
+drift from it.
+
 ## Scripted runs
 
 `--project <file>` uses a project file for the session, whatever sits

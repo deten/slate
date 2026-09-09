@@ -720,6 +720,19 @@ void letterA(const Ink& ink, qreal x, qreal y, qreal h) {
              i.painter->setBrush(Qt::NoBrush);
              i.painter->drawRect(QRectF{8.5, 8.5, 12, 12});
          }},
+        // A sheet list: numbered rows down a page, the numbers accented
+        // because the index is the list of them.
+        {"SHEETINDEX",
+         [](const Ink& i) {
+             i.ghost(4, 4, 20, 4);
+             i.ghost(4, 20, 20, 20);
+             i.line(6, 9, 8, 9);
+             i.newLine(6, 13, 8, 13);
+             i.newLine(6, 17, 8, 17);
+             i.ghost(10, 9, 18, 9);
+             i.ghost(10, 13, 18, 13);
+             i.ghost(10, 17, 18, 17);
+         }},
         {"PDFATTACH",
          [](const Ink& i) {
              // A page with a folded corner and a few lines of print.

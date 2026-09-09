@@ -1027,6 +1027,81 @@ private:
 
 }  // namespace
 
+/// SHEETINDEX: the project's sheet list as rows of text.
+///
+/// The index on a set's first sheet, written from the list so it cannot
+/// drift from it. Ordinary TEXT rows on the current layer, placed where
+/// the user points, so they are edited, moved and undone like any other
+/// text; a changed list is written again over a fresh index.
+class SheetIndexCommand final : public CommandInstance {
+public:
+    explicit SheetIndexCommand(AttachHooks hooks) : hooks_(std::move(hooks)) {}
+
+    StepResult start(CommandContext& /*context*/) override {
+        if (!hooks_.sheetList) {
+            return StepResult::failed("No project is open.");
+        }
+        sheets_ = hooks_.sheetList();
+        if (sheets_.empty()) {
+            return StepResult::failed("The project lists no sheets.");
+        }
+        InputRequest request;
+        request.kind = InputRequest::Kind::Point;
+        request.prompt = "Specify top left corner of the index";
+        return StepResult::ask(request);
+    }
+
+    StepResult supply(const InputValue& input, CommandContext& context) override {
+        if (input.kind == InputValue::Kind::Cancel) {
+            return StepResult::cancelled();
+        }
+        if (!hasCorner_) {
+            if (input.kind != InputValue::Kind::Point) {
+                return StepResult::cancelled();
+            }
+            corner_ = input.point;
+            hasCorner_ = true;
+            InputRequest request;
+            request.kind = InputRequest::Kind::Number;
+            request.prompt = "Specify text height";
+            request.defaultNumber = 2.5;
+            request.allowEmpty = true;
+            request.minimum = 0.0;
+            return StepResult::ask(request);
+        }
+        double height = 2.5;
+        if (input.kind == InputValue::Kind::Number && input.number > 0.0) {
+            height = input.number;
+        } else if (input.kind != InputValue::Kind::Empty) {
+            return StepResult::cancelled();
+        }
+        // The number in one column and the title in the next, the column
+        // wide enough for the longest number; rows a line and a half apart.
+        std::size_t widest = 0;
+        for (const auto& [number, title] : sheets_) {
+            widest = std::max(widest, number.size());
+        }
+        const double column = static_cast<double>(widest + 2) * height * 0.8;
+        double y = corner_.y - height;
+        for (const auto& [number, title] : sheets_) {
+            auto left = std::make_unique<TextEntity>(Vec3{corner_.x, y, 0.0}, number, height);
+            context.transaction().addToCurrentSpace(std::move(left));
+            auto right = std::make_unique<TextEntity>(Vec3{corner_.x + column, y, 0.0}, title,
+                                                      height);
+            context.transaction().addToCurrentSpace(std::move(right));
+            y -= height * 1.5;
+        }
+        return StepResult::done("Index of " + std::to_string(sheets_.size()) + " sheet" +
+                                (sheets_.size() == 1 ? "" : "s") + " placed");
+    }
+
+private:
+    AttachHooks hooks_;
+    std::vector<std::pair<std::string, std::string>> sheets_;
+    Vec3 corner_;
+    bool hasCorner_ = false;
+};
+
 std::vector<CommandDefinition> viewCommands(CanvasWidget* canvas,
                                             std::function<bool(const std::string&)> switchLayout,
                                             std::function<void()> quickSelect,
@@ -1036,6 +1111,19 @@ std::vector<CommandDefinition> viewCommands(CanvasWidget* canvas,
                                             AttachHooks hooks) {
     std::vector<CommandDefinition> commands;
     const AttachXrefHook attachXref = hooks.xref;
+
+    {
+        CommandDefinition definition;
+        definition.id = "cad.project.sheetindex";
+        definition.name = "SHEETINDEX";
+        definition.aliases = {"INDEX"};
+        definition.title = "Sheet Index";
+        definition.description = "Place the project's sheet list as text";
+        definition.category = "Annotate";
+        definition.supportsPickfirst = false;
+        definition.create = [hooks] { return std::make_unique<SheetIndexCommand>(hooks); };
+        commands.push_back(std::move(definition));
+    }
 
     {
         CommandDefinition definition;

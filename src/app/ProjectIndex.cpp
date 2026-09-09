@@ -3,6 +3,7 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QSet>
 #include <QTextStream>
 
 #include <algorithm>
@@ -312,6 +313,16 @@ QString ProjectIndex::digest(QStringList* problems) {
     if (!project_.notes.empty()) {
         text += QStringLiteral("Project notes: %1\n").arg(QString::fromStdString(project_.notes));
     }
+    const QStringList findings = check();
+    if (!findings.isEmpty()) {
+        text += QStringLiteral("Problems with the set:\n");
+        for (const QString& finding : findings.mid(0, 12)) {
+            text += QStringLiteral("  ") + finding + QLatin1Char('\n');
+        }
+        if (findings.size() > 12) {
+            text += QStringLiteral("  and %1 more\n").arg(findings.size() - 12);
+        }
+    }
     text += QStringLiteral("Ask SHEET <number> for what a sheet holds.\n");
     return text;
 }
@@ -493,6 +504,95 @@ bool ProjectIndex::siblingPlacement(const ProjectBackground& background,
         }
     }
     return false;
+}
+
+QStringList ProjectIndex::check() {
+    QStringList findings;
+    if (!isOpen()) {
+        return findings;
+    }
+    QSet<QString> numbers;
+    for (const ProjectSheet& sheet : project_.sheets) {
+        const QString number = QString::fromStdString(sheet.number);
+        if (numbers.contains(number.toUpper())) {
+            findings << QStringLiteral("%1 is listed twice").arg(number);
+        }
+        numbers.insert(number.toUpper());
+
+        const QString absolute = absolutePath(QString::fromStdString(sheet.file));
+        const QFileInfo file{absolute};
+        if (absolute.isEmpty() || !file.exists()) {
+            findings << QStringLiteral("%1: file missing (%2)")
+                            .arg(number, QString::fromStdString(sheet.file));
+            continue;
+        }
+        const QString reading = readingOf(sheet);
+
+        // The title block against the list. A SHEET field that says
+        // another number is the commonest slip in a set: a file copied
+        // from its neighbour and never retitled.
+        for (const QString& line : reading.split(QLatin1Char('\n'))) {
+            if (line.startsWith(QStringLiteral("Title block on"))) {
+                const int colon = line.indexOf(QStringLiteral("):"));
+                const QString fieldsText = colon < 0 ? line : line.mid(colon + 2);
+                for (const QString& field : fieldsText.split(QLatin1Char(';'))) {
+                    const int equals = field.indexOf(QStringLiteral(" = "));
+                    if (equals < 0) {
+                        continue;
+                    }
+                    const QString tag = field.left(equals).trimmed().toUpper();
+                    const QString value = field.mid(equals + 3).trimmed();
+                    const bool numberTag = (tag.startsWith(QStringLiteral("SHEET")) ||
+                                            tag == QStringLiteral("DWGNO") ||
+                                            tag == QStringLiteral("NUMBER") ||
+                                            tag == QStringLiteral("SHT")) &&
+                                           !tag.contains(QStringLiteral("TITLE"));
+                    if (numberTag && !value.isEmpty() &&
+                        value.compare(number, Qt::CaseInsensitive) != 0) {
+                        findings << QStringLiteral("%1: its title block says %2 = %3")
+                                        .arg(number, tag, value);
+                    }
+                }
+            }
+            if (line.startsWith(QStringLiteral("References:")) && !sheet.background.empty()) {
+                if (const ProjectBackground* background = project_.findBackground(sheet.background)) {
+                    const QString stem =
+                        QFileInfo{QString::fromStdString(background->file)}.completeBaseName();
+                    if (!line.contains(QStringLiteral(" ") + stem + QStringLiteral(" at "), Qt::CaseInsensitive) &&
+                        !line.contains(QStringLiteral(": ") + stem + QStringLiteral(" at "), Qt::CaseInsensitive)) {
+                        findings << QStringLiteral("%1: listed with background %2 but does not reference it")
+                                        .arg(number, QString::fromStdString(sheet.background));
+                    } else if (line.contains(stem + QStringLiteral(" at "), Qt::CaseInsensitive) &&
+                               line.contains(QStringLiteral("(not found)"))) {
+                        findings << QStringLiteral("%1: background %2 could not be found when the sheet was read")
+                                        .arg(number, QString::fromStdString(sheet.background));
+                    }
+                }
+            }
+        }
+        if (!sheet.background.empty() && !reading.contains(QStringLiteral("References:"))) {
+            findings << QStringLiteral("%1: listed with background %2 but references nothing")
+                            .arg(number, QString::fromStdString(sheet.background));
+        }
+        if (!sheet.background.empty()) {
+            if (const ProjectBackground* background = project_.findBackground(sheet.background)) {
+                const QFileInfo behind{absolutePath(QString::fromStdString(background->file))};
+                if (!behind.exists()) {
+                    findings << QStringLiteral("background %1: file missing (%2)")
+                                    .arg(QString::fromStdString(background->name),
+                                         QString::fromStdString(background->file));
+                } else if (behind.lastModified() > file.lastModified()) {
+                    findings << QStringLiteral("%1: background %2 is newer than the sheet")
+                                    .arg(number, QString::fromStdString(sheet.background));
+                }
+            } else {
+                findings << QStringLiteral("%1: background %2 is not in the project's list")
+                                .arg(number, QString::fromStdString(sheet.background));
+            }
+        }
+    }
+    findings.removeDuplicates();
+    return findings;
 }
 
 std::optional<std::string> ProjectIndex::answer(const AgentQuery& query) {

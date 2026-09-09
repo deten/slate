@@ -41,12 +41,18 @@ ProjectPanel::ProjectPanel(QWidget* parent) : QWidget(parent) {
                               "as on the sibling sheets, with the project's layers frozen."));
     auto* edit = new QPushButton{tr("Project…"), this};
     edit->setToolTip(tr("Make or change the project: its sheets, backgrounds and notes."));
+    auto* check = new QPushButton{tr("Check set"), this};
+    check->setToolTip(tr("Look for what is wrong with the set: missing files, title blocks "
+                         "that disagree with the list, backgrounds not referenced or newer "
+                         "than the sheet."));
     buttons->addWidget(open_);
     buttons->addWidget(background);
+    buttons->addWidget(check);
     buttons->addStretch();
     buttons->addWidget(edit);
     layout->addLayout(buttons);
     connect(background, &QPushButton::clicked, this, &ProjectPanel::attachBackgroundRequested);
+    connect(check, &QPushButton::clicked, this, &ProjectPanel::checkRequested);
 
     note_ = new QLabel{this};
     note_->setWordWrap(true);

@@ -745,7 +745,24 @@ DrawingReading readDrawing(const Database& db, const DrawingReadingOptions& opti
                 best = insert;
             }
         }
-        if (best == nullptr || best->attributeHandles.size() < fewestFields) {
+        if (best == nullptr) {
+            return;
+        }
+        // A block that names a sheet is a title block however few fields it
+        // has; anything else needs the full complement to count as one.
+        bool namesASheet = false;
+        for (const Handle handle : best->attributeHandles) {
+            const auto* attribute = db.get<AttributeEntity>(handle);
+            if (attribute == nullptr) {
+                continue;
+            }
+            const std::string tag = upper(attribute->tag);
+            if (tag.find("SHEET") != std::string::npos || tag.find("TITLE") != std::string::npos ||
+                tag == "DWGNO" || tag == "SHT") {
+                namesASheet = true;
+            }
+        }
+        if (best->attributeHandles.size() < (namesASheet ? std::size_t{1} : fewestFields)) {
             return;
         }
         TitleBlockReading title;

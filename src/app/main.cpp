@@ -88,6 +88,8 @@ int main(int argc, char* argv[]) {
         "attach-background",
         "Overlay a background from the project on the open drawing; empty for the sheet's own.",
         "name"};
+    const QCommandLineOption checkProjectOption{
+        "check-project", "Check the set and print what is wrong with it."};
     const QCommandLineOption panelOption{
         "panel", "Show a dock panel: layers, properties, history, references.", "name"};
     const QCommandLineOption layoutOption{
@@ -139,6 +141,7 @@ int main(int argc, char* argv[]) {
     parser.addOption(projectOption);
     parser.addOption(makeSheetsOption);
     parser.addOption(attachBackgroundOption);
+    parser.addOption(checkProjectOption);
     parser.addOption(panelOption);
     parser.addOption(layoutOption);
     parser.addOption(menuPickOption);
@@ -174,6 +177,7 @@ int main(int argc, char* argv[]) {
                           parser.isSet(agentContextOption) || parser.isSet(projectOption) ||
                           parser.isSet(makeSheetsOption) ||
                           parser.isSet(attachBackgroundOption) ||
+                          parser.isSet(checkProjectOption) ||
                           parser.isSet(dumpMenusOption) ||
                           parser.isSet(sizeOption) || parser.isSet(canvasOption);
     if (scripted || parser.isSet(noRecoveryOption)) {
@@ -248,6 +252,10 @@ int main(int argc, char* argv[]) {
             }
             if (argument == "--make-sheets") {
                 window.makeSheets();
+                continue;
+            }
+            if (argument == "--check-project") {
+                window.checkProject();
                 continue;
             }
             const bool takesValue = argument == "--run" || argument == "--hover" ||
