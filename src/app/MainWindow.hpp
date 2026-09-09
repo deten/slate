@@ -33,6 +33,7 @@ namespace cad::app {
 
 class AgentService;
 class ProjectIndex;
+class ProjectPanel;
 
 class CanvasWidget;
 class CommandLine;
@@ -564,6 +565,9 @@ private:
     std::unique_ptr<ProjectIndex> project_;
     [[nodiscard]] ProjectIndex& ensureProject();
     void openProjectBeside(const QString& drawingPath);
+    /// Show the panel what the project and the open drawing now are, and
+    /// bring it up the first time a project appears.
+    void refreshProjectPanel();
     /// Menus made for a command category, torn down when they are rebuilt.
     std::vector<QMenu*> commandMenus_;
     /// Actions appended to a menu that already existed, kept so a rebuild can
@@ -599,6 +603,8 @@ private:
     QDockWidget* propertiesDock_ = nullptr;
     QDockWidget* layerDock_ = nullptr;
     QDockWidget* historyDock_ = nullptr;
+    ProjectPanel* projectPanel_ = nullptr;
+    QDockWidget* projectDock_ = nullptr;
     QPlainTextEdit* commandLog_ = nullptr;
     QLabel* coordinateLabel_ = nullptr;
     QLabel* zoomLabel_ = nullptr;

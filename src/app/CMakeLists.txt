@@ -39,6 +39,8 @@ qt_add_executable(cad_app WIN32
     ProjectIndex.hpp
     ProjectDialog.cpp
     ProjectDialog.hpp
+    ProjectPanel.cpp
+    ProjectPanel.hpp
     PdfPages.cpp
     PdfPages.hpp
     LayerOrdering.cpp

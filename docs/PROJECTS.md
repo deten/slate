@@ -53,6 +53,15 @@ When a drawing is opened, the folder it is in is checked for a project
 file. If one is there, the set is known, and the history says so. A project
 opened by hand stays open when a drawing from elsewhere is opened.
 
+### The Project panel
+
+**View > Panels > Project** shows the set: the sheets in order, the open one
+in bold, and each one's state: its status from the list, whether its file
+is missing, and whether the background behind it has changed since the
+sheet was last saved. Double-click a sheet, or select it and press **Open
+sheet**, to open it. **Project…** opens the tool. The panel comes up on
+its own the first time a project is found.
+
 Each sheet is read the way DESCRIBE reads the open drawing, once, with its
 backgrounds followed, and the reading kept in `project.slate.index` beside
 the project until the sheet's file changes. Reading a set of twenty sheets

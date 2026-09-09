@@ -849,8 +849,9 @@ def test_a_project_beside_the_drawing_is_told_to_the_assistant(work: Path) -> No
         "sheet: M2.1 | Duct Plan | M2.1.dxf | | | draft\n"
         "sheet: M0.1 | Notes | M0.1.dxf\n", encoding="utf-8")
     log, _ = run(work, "project-context", [
-        "--open", str(drawing), "--agent-context",
+        "--open", str(drawing), "--panel", "project", "--agent-context",
     ], save=False)
+    expect("No panel named" not in log, f"the project panel is missing:\n{log}")
     expect("Project: Test Set (M)" in log, f"the project was not found beside the drawing:\n{log}")
     expect("M2.1 Duct Plan, draft - 1 rooms" in log, f"the sheet was not read:\n{log}")
     expect("M0.1 Notes - not read" in log, f"the missing sheet was not reported:\n{log}")

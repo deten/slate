@@ -3,6 +3,7 @@
 #include "AgentSettingsDialog.hpp"
 #include "ProjectDialog.hpp"
 #include "ProjectIndex.hpp"
+#include "ProjectPanel.hpp"
 
 #include <array>
 #include <functional>
@@ -331,6 +332,16 @@ void MainWindow::buildUi() {
     commandLog_->setMaximumBlockCount(1000);
     historyDock_ = makeDock(tr("History"), commandLog_);
 
+    // The set the drawing belongs to. Hidden until a project is found or
+    // made, since most drawings have none, and shown then so the sheets
+    // are one click away.
+    projectPanel_ = new ProjectPanel{this};
+    projectDock_ = makeDock(tr("Project"), projectPanel_);
+    projectDock_->hide();
+    connect(projectPanel_, &ProjectPanel::openSheetRequested, this,
+            [this](const QString& path) { openFile(path); });
+    connect(projectPanel_, &ProjectPanel::editRequested, this, &MainWindow::onProject);
+
     coordinateLabel_ = new QLabel{"0.000, 0.000", this};
     zoomLabel_ = new QLabel{"100%", this};
     selectionLabel_ = new QLabel{"", this};
@@ -457,6 +468,7 @@ void MainWindow::buildMenus() {
     auto* panels = viewMenu->addMenu(tr("&Panels"));
     panels->addAction(propertiesDock_->toggleViewAction());
     panels->addAction(layerDock_->toggleViewAction());
+    panels->addAction(projectDock_->toggleViewAction());
     panels->addAction(historyDock_->toggleViewAction());
 
     // The classic bar, for anybody who wants it back.
@@ -1860,6 +1872,22 @@ void MainWindow::onProject() {
            static_cast<int>(index.project().sheets.size()))
             .arg(QString::fromStdString(index.project().name),
                  QDir::toNativeSeparators(index.path())));
+    refreshProjectPanel();
+}
+
+void MainWindow::refreshProjectPanel() {
+    if (projectPanel_ == nullptr) {
+        return;
+    }
+    const bool hadProject = projectPanel_->property("hadProject").toBool();
+    const bool hasProject = project_ != nullptr && project_->isOpen();
+    projectPanel_->setIndex(hasProject ? project_.get() : nullptr);
+    projectPanel_->setCurrentFile(document_ == nullptr ? QString{}
+                                                       : QString::fromStdString(document_->filePath));
+    if (hasProject && !hadProject && projectDock_ != nullptr && !nonInteractive_) {
+        projectDock_->show();
+    }
+    projectPanel_->setProperty("hadProject", hasProject);
 }
 
 ProjectIndex& MainWindow::ensureProject() {
@@ -1877,14 +1905,17 @@ void MainWindow::openProjectBeside(const QString& drawingPath) {
     // opened by hand stays: a drawing from elsewhere does not close it.
     if (project_ != nullptr && project_->isOpen() &&
         ProjectIndex::projectFileFor(drawingPath).isEmpty()) {
+        refreshProjectPanel();
         return;
     }
     const bool had = project_ != nullptr && project_->isOpen();
+    const QString before = had ? project_->path() : QString{};
     ensureProject().openBeside(drawingPath);
-    if (project_->isOpen() && (!had || project_->path() != ProjectIndex::projectFileFor(drawingPath))) {
+    if (project_->isOpen() && (!had || project_->path() != before)) {
         log(tr("Project: %1 (%n sheet(s))", "", static_cast<int>(project_->project().sheets.size()))
                 .arg(QString::fromStdString(project_->project().name)));
     }
+    refreshProjectPanel();
 }
 
 void MainWindow::useProject(const QString& path) {
@@ -1895,6 +1926,7 @@ void MainWindow::useProject(const QString& path) {
     }
     log(tr("Project: %1 (%n sheet(s))", "", static_cast<int>(project_->project().sheets.size()))
             .arg(QString::fromStdString(project_->project().name)));
+    refreshProjectPanel();
 }
 
 AgentService& MainWindow::ensureAgent() {
@@ -2057,10 +2089,11 @@ void MainWindow::runAgent(const QString& instruction) {
 }
 
 bool MainWindow::showPanel(const QString& name) {
-    const std::array<std::pair<const char*, QDockWidget*>, 3> panels{{
+    const std::array<std::pair<const char*, QDockWidget*>, 4> panels{{
         {"layers", layerDock_},
         {"properties", propertiesDock_},
         {"history", historyDock_},
+        {"project", projectDock_},
     }};
     for (const auto& [key, dock] : panels) {
         if (dock == nullptr || name.compare(QLatin1String{key}, Qt::CaseInsensitive) != 0) {
