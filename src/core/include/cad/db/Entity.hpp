@@ -141,6 +141,11 @@ public:
     /// polyline is one, a dimension is many — return all of them.
     [[nodiscard]] virtual std::vector<CurvePtr> toCurves() const { return {}; }
 
+    /// True for an entity no box holds -- a construction line -- so the
+    /// extents of a drawing leave it out. Its `bounds()` is then the part
+    /// of it that is drawn, for picking, not its size.
+    [[nodiscard]] virtual bool isUnbounded() const { return false; }
+
     /// Shortest distance from a world point to this entity's geometry, or
     /// infinity when the entity cannot be picked geometrically.
     ///

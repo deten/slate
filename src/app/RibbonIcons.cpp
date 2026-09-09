@@ -99,6 +99,19 @@ void letterA(const Ink& ink, qreal x, qreal y, qreal h) {
              i.node(15, 15);
              i.node(21, 5);
          }},
+        // A construction line: runs off both edges, the point it passes
+        // through accented because that is what is picked.
+        {"XLINE",
+         [](const Ink& i) {
+             i.ghost(1, 18, 23, 6);
+             i.node(12, 12);
+         }},
+        // A ray: from its start off one edge, the start accented.
+        {"RAY",
+         [](const Ink& i) {
+             i.ghost(6, 18, 23, 6);
+             i.node(6, 18);
+         }},
         // Another one like that one: a ghost of the example and its copy
         // beside it, the copy accented because it is what gets drawn.
         {"LIKE",

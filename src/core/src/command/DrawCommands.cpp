@@ -3,6 +3,7 @@
 #include <cctype>
 
 #include "cad/command/StandardCommands.hpp"
+#include "cad/db/ConstructionLineEntity.hpp"
 #include "cad/db/CurveEntities.hpp"
 #include "cad/db/SplineEntity.hpp"
 #include "cad/geom/Arc.hpp"
@@ -82,6 +83,242 @@ const CommandKeyword kLineKeyword{"Line", "L", "Go back to drawing straight segm
 /// Continues prompting after each point, as other CAD software does, so drawing a polygon
 /// outline is one command rather than several. Each segment is a separate LINE
 /// entity, which is what distinguishes it from PLINE.
+/// XLINE and RAY: construction lines through a point.
+///
+/// XLINE asks for a point and then, for each further point, lays an
+/// infinite line through both, until Enter; or, by keyword first, a
+/// Horizontal or Vertical line through each point picked, one at a given
+/// Angle through each point, the Bisector of an angle given by a vertex and
+/// two points, or a line Offset a distance from a line picked, on the side
+/// pointed at. RAY asks for a start and then a line from it through each
+/// further point.
+class ConstructionLineCommand final : public CommandInstance {
+public:
+    explicit ConstructionLineCommand(bool bothWays) : bothWays_(bothWays) {}
+
+    StepResult start(CommandContext& /*context*/) override {
+        InputRequest request;
+        request.kind = InputRequest::Kind::Point;
+        if (bothWays_) {
+            request.prompt = "Specify a point or [Hor/Ver/Ang/Bisect/Offset]";
+            request.keywords = {
+                CommandKeyword{"Hor", "H", "Horizontal lines through the points picked"},
+                CommandKeyword{"Ver", "V", "Vertical lines through the points picked"},
+                CommandKeyword{"Ang", "A", "Lines at an angle through the points picked"},
+                CommandKeyword{"Bisect", "B", "The bisector of an angle: vertex, then two points"},
+                CommandKeyword{"Offset", "O", "A line a distance from a line picked"},
+            };
+        } else {
+            request.prompt = "Specify start point";
+        }
+        return StepResult::ask(request);
+    }
+
+    StepResult supply(const InputValue& input, CommandContext& context) override {
+        if (input.kind == InputValue::Kind::Cancel) {
+            return StepResult::cancelled();
+        }
+        if (input.kind == InputValue::Kind::Empty) {
+            return made_ > 0 ? StepResult::done(summary())
+                             : StepResult::cancelled();
+        }
+        if (input.kind == InputValue::Kind::Keyword && bothWays_ && mode_ == Mode::Through &&
+            !hasFirst_) {
+            return chooseMode(input.text);
+        }
+        switch (mode_) {
+            case Mode::Through:
+                if (input.kind != InputValue::Kind::Point) {
+                    return StepResult::cancelled();
+                }
+                if (!hasFirst_) {
+                    first_ = input.point;
+                    hasFirst_ = true;
+                    return askThrough();
+                }
+                if (const auto unit = (input.point - first_).tryNormalize(); unit.has_value()) {
+                    add(first_, *unit, context);
+                }
+                return askThrough();
+            case Mode::Horizontal:
+            case Mode::Vertical:
+                if (input.kind != InputValue::Kind::Point) {
+                    return StepResult::cancelled();
+                }
+                add(input.point, mode_ == Mode::Horizontal ? Vec3::unitX() : Vec3::unitY(), context);
+                return askPoint("Specify through point");
+            case Mode::Angle:
+                if (!hasAngle_) {
+                    if (input.kind == InputValue::Kind::Number) {
+                        angle_ = input.number;
+                    } else if (input.kind == InputValue::Kind::Point) {
+                        angle_ = (input.point - Vec3{}).angle2();
+                    } else {
+                        return StepResult::cancelled();
+                    }
+                    hasAngle_ = true;
+                    return askPoint("Specify through point");
+                }
+                if (input.kind != InputValue::Kind::Point) {
+                    return StepResult::cancelled();
+                }
+                add(input.point, Vec3{std::cos(angle_), std::sin(angle_), 0.0}, context);
+                return askPoint("Specify through point");
+            case Mode::Bisect:
+                if (input.kind != InputValue::Kind::Point) {
+                    return StepResult::cancelled();
+                }
+                if (!hasFirst_) {
+                    first_ = input.point;
+                    hasFirst_ = true;
+                    return askPoint("Specify angle start point");
+                }
+                if (!hasSecond_) {
+                    second_ = input.point;
+                    hasSecond_ = true;
+                    return askPoint("Specify angle end point");
+                }
+                {
+                    const auto a = (second_ - first_).tryNormalize();
+                    const auto b = (input.point - first_).tryNormalize();
+                    if (a.has_value() && b.has_value()) {
+                        if (const auto bisector = (*a + *b).tryNormalize(); bisector.has_value()) {
+                            add(first_, *bisector, context);
+                        }
+                    }
+                }
+                return askPoint("Specify angle end point");
+            case Mode::Offset:
+            default:
+                if (!hasOffset_) {
+                    if (input.kind != InputValue::Kind::Number) {
+                        return StepResult::cancelled();
+                    }
+                    offset_ = std::abs(input.number);
+                    hasOffset_ = true;
+                    return askLine();
+                }
+                if (!hasLine_) {
+                    if (input.kind != InputValue::Kind::Entity) {
+                        return StepResult::cancelled();
+                    }
+                    const Entity* entity = context.db().getEntity(input.entity);
+                    const std::vector<CurvePtr> curves =
+                        entity == nullptr ? std::vector<CurvePtr>{} : entity->toCurves();
+                    if (curves.empty() || curves.front() == nullptr) {
+                        return StepResult::failed("That is not a line to offset from.");
+                    }
+                    lineBase_ = curves.front()->startPoint();
+                    const auto unit = (curves.front()->endPoint() - lineBase_).tryNormalize();
+                    if (!unit.has_value()) {
+                        return StepResult::failed("That line has no direction.");
+                    }
+                    lineDirection_ = *unit;
+                    hasLine_ = true;
+                    return askPoint("Specify side to offset");
+                }
+                if (input.kind != InputValue::Kind::Point) {
+                    return StepResult::cancelled();
+                }
+                {
+                    const Vec3 left{-lineDirection_.y, lineDirection_.x, 0.0};
+                    const double side = (input.point - lineBase_).dot(left) >= 0.0 ? 1.0 : -1.0;
+                    add(lineBase_ + left * (offset_ * side), lineDirection_, context);
+                }
+                hasLine_ = false;
+                return askLine();
+        }
+    }
+
+private:
+    enum class Mode : std::uint8_t { Through, Horizontal, Vertical, Angle, Bisect, Offset };
+
+    StepResult chooseMode(std::string_view word) {
+        const char first = word.empty() ? '\0' : static_cast<char>(std::toupper(
+                                                     static_cast<unsigned char>(word.front())));
+        switch (first) {
+            case 'H':
+                mode_ = Mode::Horizontal;
+                return askPoint("Specify through point");
+            case 'V':
+                mode_ = Mode::Vertical;
+                return askPoint("Specify through point");
+            case 'A': {
+                mode_ = Mode::Angle;
+                InputRequest request;
+                request.kind = InputRequest::Kind::Angle;
+                request.prompt = "Enter angle of xline";
+                request.defaultNumber = 0.0;
+                return StepResult::ask(request);
+            }
+            case 'B':
+                mode_ = Mode::Bisect;
+                return askPoint("Specify angle vertex point");
+            case 'O': {
+                mode_ = Mode::Offset;
+                InputRequest request;
+                request.kind = InputRequest::Kind::Number;
+                request.prompt = "Specify offset distance";
+                request.minimum = 0.0;
+                return StepResult::ask(request);
+            }
+            default:
+                return StepResult::failed("Unknown option.");
+        }
+    }
+
+    void add(const Vec3& through, const Vec3& direction, CommandContext& context) {
+        context.transaction().addToCurrentSpace(
+            std::make_unique<ConstructionLineEntity>(through, direction, bothWays_));
+        ++made_;
+    }
+
+    [[nodiscard]] StepResult askThrough() const {
+        InputRequest request;
+        request.kind = InputRequest::Kind::Point;
+        request.prompt = "Specify through point";
+        request.basePoint = first_;
+        request.allowEmpty = true;
+        return StepResult::ask(request);
+    }
+
+    [[nodiscard]] static StepResult askPoint(std::string prompt) {
+        InputRequest request;
+        request.kind = InputRequest::Kind::Point;
+        request.prompt = std::move(prompt);
+        request.allowEmpty = true;
+        return StepResult::ask(request);
+    }
+
+    [[nodiscard]] static StepResult askLine() {
+        InputRequest request;
+        request.kind = InputRequest::Kind::Entity;
+        request.prompt = "Select a line object";
+        request.allowEmpty = true;
+        return StepResult::ask(request);
+    }
+
+    [[nodiscard]] std::string summary() const {
+        return std::to_string(made_) + (bothWays_ ? " construction line" : " ray") +
+               (made_ == 1 ? "" : "s") + " drawn";
+    }
+
+    bool bothWays_;
+    Mode mode_ = Mode::Through;
+    Vec3 first_;
+    Vec3 second_;
+    bool hasFirst_ = false;
+    bool hasSecond_ = false;
+    double angle_ = 0.0;
+    bool hasAngle_ = false;
+    double offset_ = 0.0;
+    bool hasOffset_ = false;
+    bool hasLine_ = false;
+    Vec3 lineBase_;
+    Vec3 lineDirection_;
+    int made_ = 0;
+};
+
 class LineCommand final : public CommandInstance {
 public:
     StepResult start(CommandContext& /*context*/) override {
@@ -1260,6 +1497,29 @@ std::vector<CommandDefinition> drawCommands() {
         line.category = "Draw";
         line.create = [] { return std::make_unique<LineCommand>(); };
         commands.push_back(std::move(line));
+    }
+    {
+        CommandDefinition xline;
+        xline.id = "cad.draw.xline";
+        xline.name = "XLINE";
+        xline.aliases = {"XL"};
+        xline.title = "Construction Line";
+        xline.description = "Draw infinite construction lines through points";
+        xline.category = "Draw";
+        xline.supportsPickfirst = false;
+        xline.create = [] { return std::make_unique<ConstructionLineCommand>(true); };
+        commands.push_back(std::move(xline));
+    }
+    {
+        CommandDefinition ray;
+        ray.id = "cad.draw.ray";
+        ray.name = "RAY";
+        ray.title = "Ray";
+        ray.description = "Draw construction lines from a point in one direction";
+        ray.category = "Draw";
+        ray.supportsPickfirst = false;
+        ray.create = [] { return std::make_unique<ConstructionLineCommand>(false); };
+        commands.push_back(std::move(ray));
     }
     {
         CommandDefinition pline;

@@ -10,6 +10,7 @@
 #include <type_traits>
 #include <variant>
 
+#include "cad/db/ConstructionLineEntity.hpp"
 #include "cad/db/CurveEntities.hpp"
 #include "cad/db/SolidEntity.hpp"
 #include "cad/db/SplineEntity.hpp"
@@ -108,6 +109,13 @@ void writeLine(const Entity& entity, const Database&, DxfBuilder& out) {
     if (line.thickness != 0.0) {
         out.pair(39, line.thickness);
     }
+}
+
+void writeConstructionLine(const Entity& entity, const Database&, DxfBuilder& out) {
+    const auto& line = static_cast<const ConstructionLineEntity&>(entity);
+    out.pair(100, line.bothWays ? "AcDbXline" : "AcDbRay");
+    out.point(10, line.base);
+    out.point(11, line.direction);
 }
 
 void writeCircle(const Entity& entity, const Database&, DxfBuilder& out) {
@@ -1035,6 +1043,8 @@ std::string EntityWriterRegistry::dxfTypeFor(const Entity& entity) const {
 EntityWriterRegistry EntityWriterRegistry::standard() {
     EntityWriterRegistry registry;
     registry.registerWriter("LINE", writeLine);
+    registry.registerWriter("XLINE", writeConstructionLine);
+    registry.registerWriter("RAY", writeConstructionLine);
     registry.registerWriter("CIRCLE", writeCircle);
     registry.registerWriter("ARC", writeArc);
     registry.registerWriter("ELLIPSE", writeEllipse);

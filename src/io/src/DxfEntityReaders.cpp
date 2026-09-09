@@ -72,6 +72,34 @@ std::unique_ptr<Entity> readLine(const DxfRecord& record, ReadContext&) {
     return entity;
 }
 
+}  // namespace
+}  // namespace cad::io
+
+#include "cad/db/ConstructionLineEntity.hpp"
+
+namespace cad::io {
+namespace {
+
+/// XLINE and RAY: a base point and a unit direction. Written the same, told
+/// apart by the record's type; a zero direction is taken as +X rather than
+/// making an entity with no direction at all.
+std::unique_ptr<Entity> readConstructionLine(const DxfRecord& record, bool bothWays) {
+    auto entity = std::make_unique<ConstructionLineEntity>();
+    entity->base = record.point(10);
+    const Vec3 direction = record.point(11, Vec3::unitX());
+    entity->direction = direction.tryNormalize().value_or(Vec3::unitX());
+    entity->bothWays = bothWays;
+    return entity;
+}
+
+std::unique_ptr<Entity> readXline(const DxfRecord& record, ReadContext&) {
+    return readConstructionLine(record, true);
+}
+
+std::unique_ptr<Entity> readRay(const DxfRecord& record, ReadContext&) {
+    return readConstructionLine(record, false);
+}
+
 std::unique_ptr<Entity> readCircle(const DxfRecord& record, ReadContext&) {
     auto entity = std::make_unique<CircleEntity>();
     entity->center = record.point(10);
@@ -769,6 +797,8 @@ const EntityReader* EntityReaderRegistry::find(const std::string& dxfType) const
 EntityReaderRegistry EntityReaderRegistry::standard() {
     EntityReaderRegistry registry;
     registry.registerReader("LINE", readLine);
+    registry.registerReader("XLINE", readXline);
+    registry.registerReader("RAY", readRay);
     registry.registerReader("CIRCLE", readCircle);
     registry.registerReader("ARC", readArc);
     registry.registerReader("ELLIPSE", readEllipse);

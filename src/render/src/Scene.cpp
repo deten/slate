@@ -1283,7 +1283,19 @@ Scene SceneBuilder::buildLayout(const Layout& layout, const Viewport& viewport,
 
 Box3 spaceExtents(Database& db, const BlockTableRecord& space, const SpatialIndex* index) {
     if (index != nullptr && index->size() > 0) {
-        return index->bounds();
+        // The index holds the drawn stretch of a construction line, which is
+        // not an extent. When the space has one, the database's walk, which
+        // leaves them out, is the answer; otherwise the index's box is it.
+        bool unbounded = false;
+        for (const Entity* entity : db.entitiesIn(space)) {
+            if (entity != nullptr && !entity->erased && entity->isUnbounded()) {
+                unbounded = true;
+                break;
+            }
+        }
+        if (!unbounded) {
+            return index->bounds();
+        }
     }
     return db.blockExtents(space);
 }

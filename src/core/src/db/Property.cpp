@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 
+#include "cad/db/ConstructionLineEntity.hpp"
 #include "cad/db/CurveEntities.hpp"
 #include "cad/db/Database.hpp"
 #include "cad/db/DimensionEntity.hpp"
@@ -203,6 +204,22 @@ void registerCurveEntities(PropertyRegistry& registry) {
             computed<LineEntity>("geometry.angle", "Angle", "Geometry", PropertyType::Angle,
                                  [](const LineEntity& e) { return (e.end - e.start).angle2(); }),
         });
+
+    for (const char* kind : {"Xline", "Ray"}) {
+        registry.registerFor(
+            kind,
+            {
+                member<ConstructionLineEntity, Vec3>("geometry.base", "Base point", "Geometry",
+                                                     PropertyType::Point,
+                                                     &ConstructionLineEntity::base),
+                member<ConstructionLineEntity, Vec3>("geometry.direction", "Direction",
+                                                     "Geometry", PropertyType::Point,
+                                                     &ConstructionLineEntity::direction),
+                computed<ConstructionLineEntity>(
+                    "geometry.angle", "Angle", "Geometry", PropertyType::Angle,
+                    [](const ConstructionLineEntity& e) { return e.direction.angle2(); }),
+            });
+    }
 
     registry.registerFor(
         "Circle",

@@ -449,6 +449,11 @@ Box3 Database::blockExtentsImpl(const BlockTableRecord& block, int maxDepth,
         if (layer != nullptr && layer->isFrozen) {
             continue;
         }
+        // A construction line has no extents to add; counting the stretch
+        // of it that is drawn would zoom out to nothing.
+        if (entity->isUnbounded()) {
+            continue;
+        }
         result = result.united(entity->bounds());
     }
 

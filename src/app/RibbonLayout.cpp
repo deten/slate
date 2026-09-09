@@ -63,6 +63,8 @@ const std::vector<RibbonTab>& ribbonLayout() {
          {
              {"Lines",
               {{"LINE", kLarge},
+               {"XLINE", kSmall},
+               {"RAY", kSmall},
                {"PLINE", kLarge},
                {"RECTANG", kSmall},
                {"POLYGON", kSmall},

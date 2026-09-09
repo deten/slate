@@ -35,6 +35,7 @@ add_executable(cad_tests
     project_tests.cpp
     system_command_tests.cpp
     like_command_tests.cpp
+    construction_line_tests.cpp
     boundary_trace_tests.cpp
     nurbs_tests.cpp
     tessellation_tests.cpp
