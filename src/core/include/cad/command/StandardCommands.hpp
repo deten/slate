@@ -53,6 +53,9 @@ namespace cad {
 /// Building-system drafting: DUCT.
 [[nodiscard]] std::vector<CommandDefinition> systemCommands();
 
+/// Drawing in the style of an example: LIKE.
+[[nodiscard]] std::vector<CommandDefinition> likeCommands();
+
 /// Build a registry populated with the built-in commands.
 ///
 /// Deliberately a function returning a fresh registry rather than a shared

@@ -99,6 +99,17 @@ void letterA(const Ink& ink, qreal x, qreal y, qreal h) {
              i.node(15, 15);
              i.node(21, 5);
          }},
+        // Another one like that one: a ghost of the example and its copy
+        // beside it, the copy accented because it is what gets drawn.
+        {"LIKE",
+         [](const Ink& i) {
+             i.ghost(3, 6, 10, 6);
+             i.ghost(10, 6, 10, 13);
+             i.ghost(3, 11, 6, 11);
+             i.line(13, 12, 20, 12);
+             i.newLine(20, 12, 20, 19);
+             i.newLine(13, 17, 16, 17);
+         }},
         // A run of duct: two lines the duct's width apart turning a corner,
         // the size tag accented because that is what the command adds.
         {"DUCT",

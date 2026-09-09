@@ -159,8 +159,22 @@ std::optional<InputValue> parseTypedInput(const InputRequest& request, std::stri
         case InputRequest::Kind::Keyword:
             return InputValue::makeText(std::string{text});
 
+        case InputRequest::Kind::Entity: {
+            // Picked on the canvas, or named by its handle: an assistant
+            // cannot click, and a person reading LIST can type what it said.
+            const bool hex = !text.empty() && text.size() <= 16 &&
+                             std::all_of(text.begin(), text.end(), [](char c) {
+                                 return std::isxdigit(static_cast<unsigned char>(c)) != 0;
+                             });
+            if (hex) {
+                const Handle handle = Handle::parse(text);
+                if (!handle.isNull()) {
+                    return InputValue::makeEntity(handle);
+                }
+            }
+            return std::nullopt;
+        }
         case InputRequest::Kind::Selection:
-        case InputRequest::Kind::Entity:
             // Picked on the canvas, not typed.
             return std::nullopt;
     }

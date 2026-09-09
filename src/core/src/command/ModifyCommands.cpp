@@ -2083,6 +2083,7 @@ std::unique_ptr<CommandRegistry> createStandardRegistry() {
     registry->registerAll(layoutCommands()).release();
     registry->registerAll(attributeCommands()).release();
     registry->registerAll(systemCommands()).release();
+    registry->registerAll(likeCommands()).release();
     registry->registerAll(purgeCommands()).release();
     return registry;
 }

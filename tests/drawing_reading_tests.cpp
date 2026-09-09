@@ -240,6 +240,24 @@ TEST_CASE("a plan reads as rooms with walls, systems, shell and title block") {
     CHECK(has(text, "Title block on sheet \"M-1\" (block TB): SHEET = M-1; TITLE = MECHANICAL PLAN"));
 }
 
+TEST_CASE("one of each thing the drawing draws is offered as an example to copy") {
+    PlanHarness plan;
+    const DrawingReading reading = readDrawing(*plan.db);
+    // The supply run, the door block and a room label; the pipe layer has
+    // lines but no run, so nothing of it.
+    REQUIRE(reading.exemplars.size() == 3);
+    CHECK(reading.exemplars[0].kind == "supply duct run");
+    CHECK(has(reading.exemplars[0].description, "on M-DUCT-SUPP, width 12"));
+    CHECK(reading.exemplars[1].kind == "door DR");
+    CHECK(reading.exemplars[2].kind == "room label");
+    CHECK(has(reading.exemplars[2].description, "(OFFICE)"));
+    for (const ExemplarReading& exemplar : reading.exemplars) {
+        CHECK(plan.db->getEntity(exemplar.handle) != nullptr);
+        CHECK(has(exemplar.description, exemplar.handle.toString().c_str()));
+    }
+    CHECK(has(reading.describe(), "Examples to copy with LIKE (handle first): supply duct run"));
+}
+
 TEST_CASE("with no time to trace, rooms are reported by their labels") {
     PlanHarness plan;
     DrawingReadingOptions options;

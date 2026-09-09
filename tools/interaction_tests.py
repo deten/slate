@@ -1065,6 +1065,38 @@ def test_the_assistant_runs_duct_with_the_duct_command(work: Path) -> None:
     expect("24x12" in tags and "12x10" in tags, f"the size tags are missing: {tags}")
 
 
+def test_the_assistant_draws_like_the_drawing_already_does(work: Path) -> None:
+    """The assistant asks what there is to copy, then draws two runs LIKE the
+    supply run the drawing already has: same layer and width, tagged anew.
+    The example is named by its handle, which the model reads from the
+    answer; here the scenario reads it from the saved file."""
+    _, saved = run(work, "like-seed", [
+        "--run", "DUCT", "--run", "S", "--run", "24x12",
+        "--run", "0,0", "--run", "600,0", "--run", "",
+    ])
+    runs = [r for r in records(saved, "LWPOLYLINE") if r.get("43") not in (None, "0.0", "0")]
+    expect(len(runs) == 1, "the seed run was not drawn")
+    handle = runs[0]["5"]
+    reply = canned(work, "like",
+                   "```\nASK EXAMPLES\n```\n"
+                   "===\n"
+                   f"```\nLIKE {handle} 12x10 0,300 400,300 400,600\n"
+                   f"LIKE {handle} 8x8 100,300 100,500\n```\n")
+    log, out = run(work, "agent-like", [
+        "--open", str(saved),
+        "--agent-reply", str(reply),
+        "--agent", "branch off the supply main into the two rooms above it",
+    ])
+    expect("Asked: ASK EXAMPLES" in log, f"the examples were not asked for:\n{log}")
+    expect("2 of 2 step(s) completed" in log, f"the LIKE steps did not run:\n{log}")
+    copies = [r for r in records(out, "LWPOLYLINE") if r.get("43") not in (None, "0.0", "0")]
+    expect(len(copies) == 3, f"expected three wide runs, got {len(copies)}")
+    expect(all(r.get("8") == "M-DUCT-SUPP" for r in copies), "a copy left the supply layer")
+    expect(all(float(r["43"]) == 24.0 for r in copies), "a copy changed its width")
+    tags = sorted(r.get("1") for r in records(out, "TEXT"))
+    expect(tags == ["12x10", "24x12", "8x8"], f"the tags are wrong: {tags}")
+
+
 def test_the_assistant_learns_house_standards_from_a_reference_folder(work: Path) -> None:
     """A folder of the office's drawings teaches the layers it uses.
 
@@ -1710,6 +1742,7 @@ SCENARIOS = [
     test_the_set_is_checked_and_the_index_sheet_is_written_from_the_list,
     test_the_assistant_places_a_thermostat_from_zones_and_spots,
     test_the_assistant_runs_duct_with_the_duct_command,
+    test_the_assistant_draws_like_the_drawing_already_does,
     test_two_hot_grips_on_one_object_stretch_together,
     test_two_hot_grips_move_the_object_once,
     test_two_midpoint_grips_each_add_a_corner,

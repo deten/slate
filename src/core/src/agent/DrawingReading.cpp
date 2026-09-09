@@ -1080,6 +1080,79 @@ DrawingReading readDrawing(const Database& db, const DrawingReadingOptions& opti
                          return a.runs.size() + a.lines > b.runs.size() + b.lines;
                      });
 
+    // ---- Exemplars: one of each kind of thing the drawing draws, for LIKE
+    // to copy. The longest run of each system layer, one symbol of each
+    // tag, one door and one window block, one room label.
+    for (const SystemReading& system : reading.systems) {
+        const RunReading* longest = nullptr;
+        for (const RunReading& run : system.runs) {
+            if (longest == nullptr || run.length > longest->length) {
+                longest = &run;
+            }
+        }
+        if (longest == nullptr) {
+            continue;
+        }
+        ExemplarReading exemplar;
+        exemplar.kind = (system.kind.empty() ? "run" : system.kind + " run");
+        exemplar.handle = longest->handle;
+        exemplar.description = exemplar.kind + " " + longest->handle.toString() + " on " +
+                               system.layer + ", width " + num(longest->width);
+        if (!system.status.empty()) {
+            exemplar.description += " (" + system.status + ")";
+        }
+        reading.exemplars.push_back(std::move(exemplar));
+    }
+    {
+        std::map<std::string, bool> seen;
+        for (const SymbolReading& symbol : reading.symbols) {
+            if (seen[symbol.tag]) {
+                continue;
+            }
+            seen[symbol.tag] = true;
+            ExemplarReading exemplar;
+            exemplar.kind = (symbol.kind == "block" ? "block " : "symbol ") + symbol.tag;
+            exemplar.handle = symbol.handle;
+            exemplar.description = exemplar.kind + " " + symbol.handle.toString() + " on " +
+                                   symbol.layer + " at " + point(symbol.position);
+            reading.exemplars.push_back(std::move(exemplar));
+        }
+    }
+    {
+        // Door and window blocks: the first of each name placed.
+        std::map<std::string, bool> seen;
+        for (const Placed& item : placed) {
+            const auto* insert = dynamic_cast<const InsertEntity*>(item.entity);
+            if (insert == nullptr || item.moved) {
+                continue;
+            }
+            const std::string part = shellPartNameOf(ownLayerName(*insert));
+            if (part != "door" && part != "window") {
+                continue;
+            }
+            const auto* block = db.get<BlockTableRecord>(insert->blockHandle);
+            const std::string name = block == nullptr ? std::string{"?"} : block->name;
+            if (seen[part + name]) {
+                continue;
+            }
+            seen[part + name] = true;
+            ExemplarReading exemplar;
+            exemplar.kind = part + " " + name;
+            exemplar.handle = insert->handle;
+            exemplar.description = exemplar.kind + " " + insert->handle.toString() + " on " +
+                                   ownLayerName(*insert);
+            reading.exemplars.push_back(std::move(exemplar));
+        }
+    }
+    if (!reading.rooms.empty() && !reading.rooms.front().labelHandles.empty()) {
+        ExemplarReading exemplar;
+        exemplar.kind = "room label";
+        exemplar.handle = reading.rooms.front().labelHandles.front();
+        exemplar.description = "room label " + exemplar.handle.toString() + " (" +
+                               reading.rooms.front().name + ")";
+        reading.exemplars.push_back(std::move(exemplar));
+    }
+
     // ---- Title blocks: on each sheet, the placed block with the most
     // attributes; in model space too, for the offices that draw the sheet
     // there.
@@ -1339,6 +1412,18 @@ std::string DrawingReading::describe() const {
         if (zones.size() > kMaxZones) {
             out << "  and " << (zones.size() - kMaxZones) << " more\n";
         }
+    }
+
+    if (!exemplars.empty()) {
+        out << "Examples to copy with LIKE (handle first):";
+        constexpr std::size_t kMaxExemplars = 16;
+        for (std::size_t i = 0; i < exemplars.size() && i < kMaxExemplars; ++i) {
+            out << (i == 0 ? " " : "; ") << exemplars[i].description;
+        }
+        if (exemplars.size() > kMaxExemplars) {
+            out << "; and " << (exemplars.size() - kMaxExemplars) << " more";
+        }
+        out << "\n";
     }
 
     if (!references.empty()) {

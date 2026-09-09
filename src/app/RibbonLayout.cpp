@@ -71,7 +71,7 @@ const std::vector<RibbonTab>& ribbonLayout() {
              {"Regions", {{"HATCH", kLarge}, {"HATCHEDIT", kSmall}}},
              // Building systems drawn as a run: the system, the size, the
              // route, and the office's conventions do the rest.
-             {"Systems", {{"DUCT", kLarge}}},
+             {"Systems", {{"LIKE", kLarge}, {"DUCT", kSmall}}},
          }},
 
         // Annotation: what a sheet says. Text, then the measurements, then the

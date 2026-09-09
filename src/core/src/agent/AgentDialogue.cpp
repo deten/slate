@@ -580,9 +580,25 @@ std::string answerAgentQuery(const Database& db, const DrawingReading& reading,
     if (query.kind == "SPOTS") {
         return answerSpots(db, reading, query.argument);
     }
+    if (query.kind == "EXAMPLES") {
+        if (reading.exemplars.empty()) {
+            return "Nothing in the drawing to copy yet: no runs, symbols, doors or labels were read.\n";
+        }
+        std::ostringstream out;
+        out << "Examples to copy with LIKE (" << reading.exemplars.size() << "):\n";
+        for (const ExemplarReading& exemplar : reading.exemplars) {
+            out << "  " << exemplar.description;
+            if (const Entity* entity = db.getEntity(exemplar.handle); entity != nullptr) {
+                out << " -- " << describeEntity(db, *entity);
+            }
+            out << "\n";
+        }
+        return out.str();
+    }
     return "Unknown question \"" + query.source +
            "\". Ask ROOM <name or number>, ROOMS, LAYER <name>, NEAR <x,y> [radius], BLOCK <name>, "
-           "SYMBOLS [tag], ZONES, ZONE <name>, SPOTS <room or zone>, SHEET <number> or PROJECT.\n";
+           "SYMBOLS [tag], ZONES, ZONE <name>, SPOTS <room or zone>, EXAMPLES, SHEET <number> or "
+           "PROJECT.\n";
 }
 
 }  // namespace cad

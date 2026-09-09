@@ -104,6 +104,16 @@ struct ZoneReading {
     std::vector<Handle> labelHandles;
 };
 
+/// An object worth copying with LIKE: one of each kind of thing the drawing
+/// draws, with the handle to name it by and a line saying what it is.
+struct ExemplarReading {
+    /// "supply duct run", "return duct run", "symbol T", "block DIFF",
+    /// "door DR", "room label"...
+    std::string kind;
+    Handle handle;
+    std::string description;
+};
+
 /// An external reference as placed in model space: which file, where, how
 /// big, how turned. What a sibling sheet needs to place the same background
 /// the same way.
@@ -143,6 +153,7 @@ struct DrawingReading {
     std::vector<ReferenceReading> references;
     std::vector<SymbolReading> symbols;
     std::vector<ZoneReading> zones;
+    std::vector<ExemplarReading> exemplars;
     /// False when room boundaries were not traced: too many curves, or no
     /// budget. The rooms are then labels only.
     bool boundariesTraced = false;
