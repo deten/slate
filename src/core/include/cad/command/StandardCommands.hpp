@@ -50,6 +50,9 @@ namespace cad {
 /// ATTDEF and ATTEDIT: the tagged text a block asks for, and changing it.
 [[nodiscard]] std::vector<CommandDefinition> attributeCommands();
 
+/// Building-system drafting: DUCT.
+[[nodiscard]] std::vector<CommandDefinition> systemCommands();
+
 /// Build a registry populated with the built-in commands.
 ///
 /// Deliberately a function returning a fresh registry rather than a shared

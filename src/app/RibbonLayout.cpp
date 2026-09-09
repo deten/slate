@@ -69,6 +69,9 @@ const std::vector<RibbonTab>& ribbonLayout() {
                {"POINT", kSmall}}},
              {"Curves", {{"CIRCLE", kLarge}, {"ARC", kLarge}, {"ELLIPSE", kSmall}, {"SPLINE", kSmall}}},
              {"Regions", {{"HATCH", kLarge}, {"HATCHEDIT", kSmall}}},
+             // Building systems drawn as a run: the system, the size, the
+             // route, and the office's conventions do the rest.
+             {"Systems", {{"DUCT", kLarge}}},
          }},
 
         // Annotation: what a sheet says. Text, then the measurements, then the

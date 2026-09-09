@@ -1040,6 +1040,31 @@ def test_the_assistant_places_a_thermostat_from_zones_and_spots(work: Path) -> N
     expect(told.exists(), "the drawing was not saved")
 
 
+def test_the_assistant_runs_duct_with_the_duct_command(work: Path) -> None:
+    """A duct layout as the assistant writes it: one DUCT line per run. Each
+    becomes a wide polyline on the supply layer with its size along it."""
+    reply = canned(work, "duct",
+                   "```\nASK ROOMS\n```\n"
+                   "===\n"
+                   "```\nDUCT SUPPLY 24x12 100,2800 3900,2800\n"
+                   "DUCT SUPPLY 12x10 2000,2800 2000,1500\n```\n")
+    log, saved = run(work, "agent-duct", [
+        "--run", "RECTANGLE", "--run", "0,0", "--run", "4000,3000",
+        "--run", "TEXT", "--run", "1500,1600", "--run", "100", "--run", "0",
+        "--run", "OFFICE", "--run", "",
+        "--agent-reply", str(reply),
+        "--agent", "run supply duct through the office",
+    ])
+    expect("2 of 2 step(s) completed" in log, f"the runs were not drawn:\n{log}")
+    runs = [r for r in records(saved, "LWPOLYLINE") if r.get("43") not in (None, "0.0", "0")]
+    expect(len(runs) == 2, f"expected two wide runs, got {len(runs)}")
+    widths = sorted(float(r["43"]) for r in runs)
+    expect(widths == [12.0, 24.0], f"the widths are wrong: {widths}")
+    expect(all(r.get("8") == "M-DUCT-SUPP" for r in runs), "the runs are not on the supply layer")
+    tags = [r.get("1") for r in records(saved, "TEXT")]
+    expect("24x12" in tags and "12x10" in tags, f"the size tags are missing: {tags}")
+
+
 def test_the_assistant_learns_house_standards_from_a_reference_folder(work: Path) -> None:
     """A folder of the office's drawings teaches the layers it uses.
 
@@ -1684,6 +1709,7 @@ SCENARIOS = [
     test_a_background_is_overlaid_the_office_way,
     test_the_set_is_checked_and_the_index_sheet_is_written_from_the_list,
     test_the_assistant_places_a_thermostat_from_zones_and_spots,
+    test_the_assistant_runs_duct_with_the_duct_command,
     test_two_hot_grips_on_one_object_stretch_together,
     test_two_hot_grips_move_the_object_once,
     test_two_midpoint_grips_each_add_a_corner,

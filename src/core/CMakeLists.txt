@@ -86,6 +86,7 @@ add_library(cad_core STATIC
     src/command/BlockCommands.cpp
     src/command/LayoutCommands.cpp
     src/command/AttributeCommands.cpp
+    src/command/SystemCommands.cpp
     src/command/LayerCommands.cpp
     src/command/AnnotationCommands.cpp
 )

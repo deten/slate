@@ -99,6 +99,16 @@ void letterA(const Ink& ink, qreal x, qreal y, qreal h) {
              i.node(15, 15);
              i.node(21, 5);
          }},
+        // A run of duct: two lines the duct's width apart turning a corner,
+        // the size tag accented because that is what the command adds.
+        {"DUCT",
+         [](const Ink& i) {
+             i.ghost(4, 8, 14, 8);
+             i.ghost(4, 14, 11, 14);
+             i.ghost(14, 8, 14, 20);
+             i.ghost(11, 14, 11, 20);
+             i.line(16, 4, 21, 4);
+         }},
         // A plan read as rooms: two rooms side by side with a label line in
         // each, the labels accented because the reading is what is reported.
         {"DESCRIBE",
