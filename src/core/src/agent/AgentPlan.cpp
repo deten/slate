@@ -26,11 +26,31 @@ namespace {
 }
 
 /// Split on whitespace. Coordinates use commas, so they survive intact.
+/// Split on spaces, except inside double quotes: `TEXT 0,0 5 0 "ZONE 1"`
+/// gives the label as one input. The quotes are not part of the input.
 [[nodiscard]] std::vector<std::string> words(const std::string& line) {
-    std::istringstream stream{line};
     std::vector<std::string> out;
     std::string word;
-    while (stream >> word) {
+    bool quoted = false;
+    bool any = false;
+    for (const char c : line) {
+        if (c == '"') {
+            quoted = !quoted;
+            any = true;
+            continue;
+        }
+        if (!quoted && (c == ' ' || c == '\t')) {
+            if (any) {
+                out.push_back(word);
+                word.clear();
+                any = false;
+            }
+            continue;
+        }
+        word.push_back(c);
+        any = true;
+    }
+    if (any) {
         out.push_back(word);
     }
     return out;

@@ -53,6 +53,13 @@ and passes that along too:
   which blocks they are.
 - **The title block.** The block with the most attributes on each sheet,
   and its fields.
+- **Symbols.** A letter or two in a small circle, the way thermostats,
+  sensors and switches are drawn, and any block named for a device.
+  Counted by tag in the summary, with positions on request.
+- **Zones.** A tag such as "ZONE 3" or "VAV-2", with the outline that
+  holds it: a closed polyline on a zone layer, or the walls around the
+  tag. Each zone lists the rooms inside it and the symbols it has, so a
+  zone without its thermostat is plain to see.
 
 Frozen and switched-off layers are read, and so is everything a resolved
 external reference brings in, placed where the reference is placed: a
@@ -77,7 +84,20 @@ ASK ROOMS                every room, with size and position
 ASK LAYER M-DUCT-SUPP    what is on a layer
 ASK NEAR 1200,1400 100   what is around a point
 ASK BLOCK DIFF           what a block contains and where it is placed
+ASK SYMBOLS T            every thermostat: position, layer, and which room
+ASK ZONES                every zone, its rooms and the symbols inside it
+ASK ZONE 3               one zone, with each of its rooms
+ASK SPOTS ZONE 3         wall spots for a device in the zone's rooms, best first
+ASK SHEET M2.1           what another sheet of the project holds
+ASK PROJECT              every sheet of the project and its backgrounds
 ```
+
+Wall spots are Slate's geometry, not the model's guess: points on the
+room's interior walls, clear of doors, windows and air terminals, nearest
+the door first, each with the reason. The model picks one and places the
+device with ordinary commands, so "make sure every zone has a thermostat
+and label it" becomes: ask for the zones, see which have none, ask for
+spots, draw.
 
 A few rounds of this are allowed per request. Each question and its answer
 go in the history, so what the assistant was told is on record.

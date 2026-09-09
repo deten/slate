@@ -4,6 +4,7 @@
 #include <cctype>
 #include <cmath>
 #include <iomanip>
+#include <limits>
 #include <sstream>
 
 #include "cad/agent/DrawingStandards.hpp"
@@ -23,6 +24,7 @@
 #include "cad/db/ViewportEntity.hpp"
 #include "cad/geom/BoundaryTrace.hpp"
 #include "cad/math/Mat4.hpp"
+#include "cad/project/Project.hpp"
 
 namespace cad {
 namespace {
@@ -127,6 +129,7 @@ struct Label {
     Box3 bounds;
     double height = 0.0;
     bool used = false;
+    std::string layer;
 };
 
 [[nodiscard]] bool isNumberLike(std::string_view text) {
@@ -321,6 +324,185 @@ bool looksLikeRoomName(std::string_view raw) {
     return true;
 }
 
+bool looksLikeZoneName(std::string_view raw, std::string* name) {
+    const std::string text = upper(trimmed(raw));
+    if (text.size() < 2 || text.size() > 16) {
+        return false;
+    }
+    // The word, then the number: "ZONE 3", "ZONE-3", "ZONE:3", "Z-3", "Z3",
+    // "VAV-2", "VAV 2". A bare word or a bare number is neither.
+    static const char* const kWords[] = {"ZONE", "VAV", "Z"};
+    for (const char* word : kWords) {
+        const std::string prefix{word};
+        if (text.rfind(prefix, 0) != 0) {
+            continue;
+        }
+        std::string rest = text.substr(prefix.size());
+        while (!rest.empty() && (rest.front() == ' ' || rest.front() == '-' || rest.front() == ':' ||
+                                 rest.front() == '#' || rest.front() == '_')) {
+            rest.erase(rest.begin());
+        }
+        if (rest.empty() || rest.size() > 6) {
+            continue;
+        }
+        bool digits = false;
+        for (const char c : rest) {
+            if (std::isdigit(static_cast<unsigned char>(c)) != 0) {
+                digits = true;
+            } else if (std::isalpha(static_cast<unsigned char>(c)) == 0) {
+                return false;
+            }
+        }
+        if (!digits) {
+            continue;
+        }
+        if (name != nullptr) {
+            *name = prefix == "Z" ? "ZONE " + rest : prefix == "ZONE" ? "ZONE " + rest : prefix + "-" + rest;
+        }
+        return true;
+    }
+    return false;
+}
+
+std::vector<SpotReading> candidateSpots(const Database& db, const DrawingReading& reading,
+                                        const RoomReading& room, std::size_t count) {
+    std::vector<SpotReading> spots;
+    if (!room.bounded || room.boundaryHandles.empty()) {
+        return spots;
+    }
+    // The room's walls as curves, doors and windows set aside: a device
+    // goes on a wall, near the door, not in the opening.
+    struct Wall {
+        CurvePtr curve;
+        bool opening;
+    };
+    std::vector<Wall> walls;
+    std::vector<Vec3> doors;
+    for (const Handle handle : room.boundaryHandles) {
+        const Entity* entity = db.getEntity(handle);
+        if (entity == nullptr || entity->erased) {
+            continue;
+        }
+        const std::string part = shellPartNameOf(layerNameOf(db, *entity));
+        const bool opening = part == "door" || part == "window";
+        std::vector<CurvePtr> curves;
+        if (const auto* insert = dynamic_cast<const InsertEntity*>(entity)) {
+            curves = blockReferenceCurves(db, *insert);
+            if (part == "door") {
+                doors.push_back(insert->position);
+            }
+        } else {
+            curves = entity->toCurves();
+        }
+        for (CurvePtr& curve : curves) {
+            if (curve != nullptr) {
+                walls.push_back(Wall{std::move(curve), opening});
+            }
+        }
+    }
+    if (walls.empty()) {
+        return spots;
+    }
+    // Air terminals and other symbols already in the room are kept clear of.
+    std::vector<Vec3> avoid;
+    const Box3 inside = room.bounds.expanded(room.bounds.diagonal() * 0.01);
+    for (const Entity* entity : db.entitiesIn(const_cast<Database&>(db).modelSpace())) {
+        const auto* insert = dynamic_cast<const InsertEntity*>(entity);
+        if (insert == nullptr || insert->erased || !inside.containsPoint(insert->position)) {
+            continue;
+        }
+        const std::string kind = systemKindOf(layerNameOf(db, *entity));
+        if (kind == "air terminals" || kind == "supply duct" || kind == "return duct" ||
+            kind == "duct") {
+            avoid.push_back(insert->position);
+        }
+    }
+    for (const SymbolReading& symbol : reading.symbols) {
+        if (inside.containsPoint(symbol.position)) {
+            avoid.push_back(symbol.position);
+        }
+    }
+
+    // Walk each wall at steps of a twentieth of the room's size; score each
+    // point by distance to the nearest door, the wall being interior, and
+    // clearance from openings and what is to be avoided.
+    const double step = std::max(room.bounds.diagonal() / 20.0, 1e-6);
+    const double edge = room.bounds.diagonal() * 0.02;
+    const Vec3 centre = room.bounds.center();
+    for (const Wall& wall : walls) {
+        if (wall.opening) {
+            continue;
+        }
+        const double length = wall.curve->length();
+        const int steps = std::max(1, static_cast<int>(length / step));
+        for (int i = 1; i < steps; ++i) {
+            const double t = static_cast<double>(i) / steps;
+            const Vec3 p = wall.curve->pointAt(t);
+            // Interior walls lie inside the room's box; a point on the box's
+            // own edge is an outside wall, which is where the windows are.
+            const bool outside = std::abs(p.x - room.bounds.min.x) < edge ||
+                                 std::abs(p.x - room.bounds.max.x) < edge ||
+                                 std::abs(p.y - room.bounds.min.y) < edge ||
+                                 std::abs(p.y - room.bounds.max.y) < edge;
+            double nearestOpening = std::numeric_limits<double>::infinity();
+            for (const Wall& other : walls) {
+                if (other.opening) {
+                    nearestOpening = std::min(nearestOpening, other.curve->distanceTo(p));
+                }
+            }
+            double nearestDoor = std::numeric_limits<double>::infinity();
+            for (const Vec3& door : doors) {
+                nearestDoor = std::min(nearestDoor, door.distanceTo(p));
+            }
+            double nearestAvoid = std::numeric_limits<double>::infinity();
+            for (const Vec3& a : avoid) {
+                nearestAvoid = std::min(nearestAvoid, a.distanceTo(p));
+            }
+            if (nearestOpening < step) {
+                continue;
+            }
+            SpotReading spot;
+            spot.position = p;
+            spot.along = wall.curve->tangentAt(t);
+            spot.cost = (std::isfinite(nearestDoor) ? nearestDoor : room.bounds.diagonal()) +
+                        (outside ? room.bounds.diagonal() : 0.0) +
+                        (nearestAvoid < 2.0 * step ? room.bounds.diagonal() : 0.0);
+            // Which wall, by where it sits relative to the room's centre.
+            const Vec3 d = p - centre;
+            const char* side = std::abs(d.x) > std::abs(d.y) ? (d.x > 0 ? "east" : "west")
+                                                             : (d.y > 0 ? "north" : "south");
+            spot.reason = std::string(outside ? "outside " : "inside ") + side + " wall";
+            if (std::isfinite(nearestDoor)) {
+                spot.reason += ", " + num(nearestDoor) + " from the door";
+            }
+            if (std::isfinite(nearestAvoid)) {
+                spot.reason += ", " + num(nearestAvoid) + " from the nearest terminal or symbol";
+            }
+            spots.push_back(std::move(spot));
+        }
+    }
+    std::stable_sort(spots.begin(), spots.end(),
+                     [](const SpotReading& a, const SpotReading& b) { return a.cost < b.cost; });
+    // Spread out: no two offered spots within a step of each other.
+    std::vector<SpotReading> chosen;
+    for (const SpotReading& spot : spots) {
+        bool near = false;
+        for (const SpotReading& taken : chosen) {
+            if (taken.position.distanceTo(spot.position) < 2.0 * step) {
+                near = true;
+                break;
+            }
+        }
+        if (!near) {
+            chosen.push_back(spot);
+        }
+        if (chosen.size() == count) {
+            break;
+        }
+    }
+    return chosen;
+}
+
 DrawingReading readDrawing(const Database& db, const DrawingReadingOptions& options) {
     const auto started = std::chrono::steady_clock::now();
     const auto outOfTime = [&] {
@@ -357,6 +539,21 @@ DrawingReading readDrawing(const Database& db, const DrawingReadingOptions& opti
     std::vector<Label> labels;
     std::map<std::string, int> labelUses;
     std::map<std::string, SystemReading> systems;
+    struct Circle {
+        Handle handle;
+        Vec3 center;
+        double radius;
+        std::string layer;
+    };
+    std::vector<Circle> circles;
+    // Closed outlines on zone layers, and the inserts named for a device,
+    // both kept for after the rooms are known.
+    struct Outline {
+        Handle handle;
+        std::vector<Vec3> polygon;
+    };
+    std::vector<Outline> zoneOutlines;
+    std::vector<SymbolReading> namedSymbols;
     std::vector<CurvePtr> boundary;
     std::vector<Handle> boundaryOwners;
     bool tooManyCurves = false;
@@ -454,7 +651,7 @@ DrawingReading readDrawing(const Database& db, const DrawingReadingOptions& opti
             } else if (const auto* multi = dynamic_cast<const MTextEntity*>(entity)) {
                 height = multi->height;
             }
-            labels.push_back(Label{entity->handle, text, bounds, height, false});
+            labels.push_back(Label{entity->handle, text, bounds, height, false, layerName});
             ++labelUses[text];
             if (!kind.empty()) {
                 ++systems[layerName].labels[text];
@@ -463,6 +660,16 @@ DrawingReading readDrawing(const Database& db, const DrawingReadingOptions& opti
         }
 
         if (const auto* polyline = dynamic_cast<const PolylineEntity*>(entity)) {
+            // A closed outline on a zone layer marks a zone.
+            if (polyline->closed && upper(layerName).find("ZONE") != std::string::npos &&
+                polyline->vertices.size() >= 3) {
+                Outline outline;
+                outline.handle = entity->handle;
+                for (const PolylineVertex& vertex : polyline->vertices) {
+                    outline.polygon.push_back(item.transform.transformPoint(vertex.position));
+                }
+                zoneOutlines.push_back(std::move(outline));
+            }
             const double width = widthOf(*polyline);
             if (width > 0.0) {
                 SystemReading& system = systems[layerName];
@@ -486,6 +693,24 @@ DrawingReading readDrawing(const Database& db, const DrawingReadingOptions& opti
             if (!kind.empty()) {
                 ++systems[layerName].blocks[blockName];
             }
+            // A block named for a device is a symbol wherever it sits.
+            {
+                const std::string name = upper(blockName);
+                static const char* const kDevices[] = {"TSTAT", "T-STAT", "THERMO", "SENSOR",
+                                                       "SWITCH", "STAT", "HUMID", "CO2"};
+                for (const char* device : kDevices) {
+                    if (name.find(device) != std::string::npos) {
+                        SymbolReading symbol;
+                        symbol.tag = blockName;
+                        symbol.position = item.transform.transformPoint(insert->position);
+                        symbol.layer = layerName;
+                        symbol.kind = "block";
+                        symbol.handle = entity->handle;
+                        namedSymbols.push_back(std::move(symbol));
+                        break;
+                    }
+                }
+            }
             if (shell == ShellPart::Door) {
                 ++reading.architecture.doorBlocks[blockName];
                 ++reading.architecture.doors;
@@ -500,10 +725,15 @@ DrawingReading readDrawing(const Database& db, const DrawingReadingOptions& opti
             if (shell == ShellPart::Wall) {
                 ++reading.architecture.wallLayers[layerName];
             }
-        } else if (dynamic_cast<const CircleEntity*>(entity) != nullptr) {
+        } else if (const auto* circle = dynamic_cast<const CircleEntity*>(entity)) {
             if (!kind.empty()) {
                 ++systems[layerName].circles;
             }
+            // Small circles are what letters sit in to make a symbol.
+            circles.push_back(Circle{entity->handle,
+                                     item.transform.transformPoint(circle->center),
+                                     circle->radius * (item.moved ? item.transform.transformVector(Vec3::unitX()).length() : 1.0),
+                                     layerName});
         }
 
         // What bounds a room is what is drawn: not fills, notes, dimensions,
@@ -608,7 +838,10 @@ DrawingReading readDrawing(const Database& db, const DrawingReadingOptions& opti
                 }
             }
         }
-        room.label = stack.center();
+        // The seed for the walls is the name itself, not the stack with the
+        // number: the number often sits in a bubble, and a seed inside the
+        // bubble would trace the bubble.
+        room.label = first.bounds.center();
 
         // The number: the nearest short number-like label within a few line
         // heights, usually directly below.
@@ -657,20 +890,39 @@ DrawingReading readDrawing(const Database& db, const DrawingReadingOptions& opti
                 break;
             }
             ++traced;
-            const BoundaryTraceResult found = traceBoundary(curves, room.label);
-            if (!found.ok()) {
-                continue;
-            }
-            const BoundaryLoop& outer = found.loops.front();
+            // A label often sits in a bubble or a box of its own; a seed
+            // inside one traces the bubble. When the loop is smaller than
+            // a closet, seed again just outside it, once.
+            Vec3 seed = room.label;
             std::vector<Vec3> polygon;
-            for (const CurvePtr& curve : outer.curves) {
-                for (const Vec3& p : curve->tessellate()) {
-                    if (polygon.empty() || polygon.back().distanceTo(p) > 1e-9) {
-                        polygon.push_back(p);
+            double area = 0.0;
+            const BoundaryLoop* outer = nullptr;
+            BoundaryTraceResult found;
+            for (int attempt = 0; attempt < 2; ++attempt) {
+                found = traceBoundary(curves, seed);
+                if (!found.ok()) {
+                    break;
+                }
+                outer = &found.loops.front();
+                polygon.clear();
+                for (const CurvePtr& curve : outer->curves) {
+                    for (const Vec3& p : curve->tessellate()) {
+                        if (polygon.empty() || polygon.back().distanceTo(p) > 1e-9) {
+                            polygon.push_back(p);
+                        }
                     }
                 }
+                area = polygonArea(polygon);
+                if (area <= 0.0 || area / reading.areaDivisor >= smallestRoom) {
+                    break;
+                }
+                const Box3 bubble = Box3::fromPoints(polygon);
+                seed = Vec3{bubble.max.x + bubble.width() * 0.25, seed.y, seed.z};
+                outer = nullptr;
             }
-            const double area = polygonArea(polygon);
+            if (!found.ok() || outer == nullptr) {
+                continue;
+            }
             // A loop reached through a gap in the walls is the outside, or
             // the whole floor: it has other rooms' labels inside it. The
             // room is open, not enormous. One smaller than a closet is the
@@ -691,7 +943,7 @@ DrawingReading readDrawing(const Database& db, const DrawingReadingOptions& opti
             room.bounded = true;
             room.area = area;
             room.bounds = Box3::fromPoints(polygon);
-            for (const std::size_t source : outer.sources) {
+            for (const std::size_t source : outer->sources) {
                 if (source < boundaryOwners.size()) {
                     const Handle owner = boundaryOwners[source];
                     if (std::find(room.boundaryHandles.begin(), room.boundaryHandles.end(),
@@ -714,6 +966,104 @@ DrawingReading readDrawing(const Database& db, const DrawingReadingOptions& opti
             }
         }
     }
+
+    // ---- Symbols: a letter or two in a circle no bigger than a couple of
+    // text heights, the letter not already a room's number. And the blocks
+    // named for a device, found above.
+    reading.symbols = std::move(namedSymbols);
+    for (const Circle& circle : circles) {
+        for (Label& label : labels) {
+            if (label.used || label.text.size() > 2 || label.height <= 0.0) {
+                continue;
+            }
+            if (circle.radius > 2.5 * label.height || circle.radius < 0.3 * label.height) {
+                continue;
+            }
+            bool letters = true;
+            for (const char c : label.text) {
+                if (std::isalpha(static_cast<unsigned char>(c)) == 0) {
+                    letters = false;
+                }
+            }
+            if (!letters) {
+                continue;
+            }
+            if (label.bounds.center().distanceTo(circle.center) > circle.radius) {
+                continue;
+            }
+            SymbolReading symbol;
+            symbol.tag = upper(label.text);
+            symbol.position = circle.center;
+            symbol.layer = circle.layer;
+            symbol.kind = "circle";
+            symbol.handle = circle.handle;
+            reading.symbols.push_back(std::move(symbol));
+            label.used = true;
+            break;
+        }
+    }
+
+    // ---- Zones: a tag, and the outline that holds it when there is one --
+    // a closed polyline on a zone layer, else the walls around the tag.
+    // What lies inside is what a zone is for: its rooms, and whether it
+    // has its thermostat.
+    for (Label& label : labels) {
+        std::string name;
+        if (label.used || !looksLikeZoneName(label.text, &name)) {
+            continue;
+        }
+        ZoneReading zone;
+        zone.name = name;
+        zone.label = label.bounds.center();
+        zone.labelHandles.push_back(label.handle);
+        label.used = true;
+        for (const Outline& outline : zoneOutlines) {
+            if (insidePolygon(outline.polygon, zone.label)) {
+                zone.outline = outline.polygon;
+                break;
+            }
+        }
+        if (zone.outline.empty() && reading.boundariesTraced) {
+            // The walls around the tag, as for a room; a tag in a corridor
+            // that opens onto the whole floor gets no outline.
+            std::vector<const Curve*> curves;
+            curves.reserve(boundary.size());
+            for (const CurvePtr& curve : boundary) {
+                curves.push_back(curve.get());
+            }
+            if (!curves.empty() && !outOfTime()) {
+                const BoundaryTraceResult found = traceBoundary(curves, zone.label);
+                if (found.ok()) {
+                    for (const CurvePtr& curve : found.loops.front().curves) {
+                        for (const Vec3& p : curve->tessellate()) {
+                            if (zone.outline.empty() || zone.outline.back().distanceTo(p) > 1e-9) {
+                                zone.outline.push_back(p);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if (!zone.outline.empty()) {
+            zone.bounded = true;
+            zone.bounds = Box3::fromPoints(zone.outline);
+            for (const RoomReading& room : reading.rooms) {
+                if (insidePolygon(zone.outline, room.label)) {
+                    zone.rooms.push_back(room.name + (room.number.empty() ? "" : " " + room.number));
+                }
+            }
+            for (const SymbolReading& symbol : reading.symbols) {
+                if (insidePolygon(zone.outline, symbol.position)) {
+                    ++zone.symbols[symbol.tag];
+                }
+            }
+        }
+        reading.zones.push_back(std::move(zone));
+    }
+    std::stable_sort(reading.zones.begin(), reading.zones.end(),
+                     [](const ZoneReading& a, const ZoneReading& b) {
+                         return sheetNumberLess(a.name, b.name);
+                     });
 
     // ---- Systems: the layers named for one, or drawn like one.
     for (auto& [layerName, system] : systems) {
@@ -936,6 +1286,58 @@ std::string DrawingReading::describe() const {
         }
         if (systems.size() > kMaxSystems) {
             out << "  and " << (systems.size() - kMaxSystems) << " more\n";
+        }
+    }
+
+    if (!symbols.empty()) {
+        // Counted by tag: "T x19" says how many thermostats without listing
+        // where; ASK SYMBOLS T gives the positions.
+        std::map<std::string, int> byTag;
+        for (const SymbolReading& symbol : symbols) {
+            ++byTag[symbol.tag];
+        }
+        out << "Symbols (letters in circles, device blocks):";
+        bool first = true;
+        for (const auto& [tag, count] : byTag) {
+            out << (first ? " " : ", ") << tag << " x" << count;
+            first = false;
+        }
+        out << "\n";
+    }
+
+    if (!zones.empty()) {
+        out << "Zones (" << zones.size() << "):\n";
+        constexpr std::size_t kMaxZones = 40;
+        for (std::size_t i = 0; i < zones.size() && i < kMaxZones; ++i) {
+            const ZoneReading& zone = zones[i];
+            out << "  " << zone.name;
+            if (zone.bounded) {
+                out << ": " << num(zone.bounds.width()) << " x " << num(zone.bounds.height())
+                    << ", centre " << point(zone.bounds.center());
+                if (!zone.rooms.empty()) {
+                    out << ", rooms";
+                    for (std::size_t r = 0; r < zone.rooms.size() && r < 8; ++r) {
+                        out << (r == 0 ? " " : "; ") << zone.rooms[r];
+                    }
+                    if (zone.rooms.size() > 8) {
+                        out << "; and " << (zone.rooms.size() - 8) << " more";
+                    }
+                }
+                if (zone.symbols.empty()) {
+                    out << ", no symbols inside";
+                } else {
+                    out << ", symbols";
+                    for (const auto& [tag, count] : zone.symbols) {
+                        out << " " << tag << " x" << count;
+                    }
+                }
+            } else {
+                out << ": tag at " << point(zone.label) << ", no outline";
+            }
+            out << "\n";
+        }
+        if (zones.size() > kMaxZones) {
+            out << "  and " << (zones.size() - kMaxZones) << " more\n";
         }
     }
 

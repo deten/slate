@@ -268,6 +268,98 @@ TEST_CASE("the assistant's digest carries the reading") {
     CHECK(has(text, "OFFICE 101: 826 sq ft"));
 }
 
+TEST_CASE("a zone tag is a word and a number in the usual shapes") {
+    std::string name;
+    CHECK(looksLikeZoneName("ZONE 3", &name));
+    CHECK(name == "ZONE 3");
+    CHECK(looksLikeZoneName("Zone-12", &name));
+    CHECK(name == "ZONE 12");
+    CHECK(looksLikeZoneName("Z-3", &name));
+    CHECK(name == "ZONE 3");
+    CHECK(looksLikeZoneName("VAV-2", &name));
+    CHECK(name == "VAV-2");
+    CHECK(looksLikeZoneName("VAV 2A", &name));
+    CHECK(name == "VAV-2A");
+    CHECK_FALSE(looksLikeZoneName("ZONE"));
+    CHECK_FALSE(looksLikeZoneName("3"));
+    CHECK_FALSE(looksLikeZoneName("OFFICE"));
+    CHECK_FALSE(looksLikeZoneName("ZONING NOTES"));
+}
+
+TEST_CASE("symbols, zones and wall spots are read from a plan") {
+    PlanHarness plan;
+    Database& db = *plan.db;
+    // A thermostat drawn as a T in a circle in the office, and a device
+    // block in the staff room; a room-number bubble that is not a symbol.
+    db.addToModelSpace(std::make_unique<CircleEntity>(Vec3{40, 150, 0}, 8.0));
+    plan.text("T", {36, 146}, "M-DUCT-SUPP");
+    auto device = std::make_unique<BlockTableRecord>();
+    device->name = "T-STAT";
+    BlockTableRecord& stat = db.addBlock(std::move(device));
+    db.addEntity(std::make_unique<CircleEntity>(Vec3{}, 6.0), stat);
+    db.addToModelSpace(std::make_unique<InsertEntity>(stat.handle, Vec3{760, 150, 0}));
+    db.addToModelSpace(std::make_unique<CircleEntity>(Vec3{200, 140, 0}, 30.0));
+    // Zone 1 is the office, outlined on a zone layer; zone 2 is tagged in
+    // the staff room and takes its walls.
+    Layer& zones = db.ensureLayer("M-ZONE");
+    const Vec3 outline[] = {{-10, -10, 0}, {410, -10, 0}, {410, 310, 0}, {-10, 310, 0}};
+    auto loop = std::make_unique<PolylineEntity>(PolylineEntity::fromPoints(outline, true));
+    loop->layerHandle = zones.handle;
+    db.addToModelSpace(std::move(loop));
+    plan.text("ZONE 1", {300, 40}, "M-ZONE");
+    plan.text("VAV-2", {700, 40}, "M-ZONE");
+
+    const DrawingReading reading = readDrawing(db);
+
+    REQUIRE(reading.symbols.size() == 2);
+    CHECK(reading.symbols[0].tag == "T-STAT");
+    CHECK(reading.symbols[0].kind == "block");
+    CHECK(reading.symbols[1].tag == "T");
+    CHECK(reading.symbols[1].kind == "circle");
+    CHECK(reading.symbols[1].position.x == doctest::Approx(40.0));
+
+    REQUIRE(reading.zones.size() == 2);
+    const ZoneReading& one = reading.zones[0];
+    CHECK(one.name == "VAV-2");
+    CHECK(one.bounded);
+    REQUIRE(one.rooms.size() == 1);
+    CHECK(one.rooms[0] == "STAFF WORK 102");
+    CHECK(one.symbols.at("T-STAT") == 1);
+    const ZoneReading& two = reading.zones[1];
+    CHECK(two.name == "ZONE 1");
+    CHECK(two.bounded);
+    CHECK(two.bounds.width() == doctest::Approx(420.0));
+    REQUIRE(two.rooms.size() == 1);
+    CHECK(two.rooms[0] == "OFFICE 101");
+    CHECK(two.symbols.at("T") == 1);
+
+    // The room-number bubble did not become a symbol, and the number still
+    // belongs to its room.
+    CHECK(reading.rooms[0].number == "101");
+
+    const std::string text = reading.describe();
+    CHECK(has(text, "Symbols (letters in circles, device blocks): T x1, T-STAT x1"));
+    CHECK(has(text, "ZONE 1: 420 x 320, centre 200,150, rooms OFFICE 101, symbols T x1"));
+    CHECK(has(text, "VAV-2:"));
+
+    // Wall spots in the office: on a wall, clear of the door, best nearest
+    // the door.
+    const std::vector<SpotReading> spots = candidateSpots(db, reading, reading.rooms[0]);
+    REQUIRE(!spots.empty());
+    CHECK(spots.size() <= 5);
+    for (const SpotReading& spot : spots) {
+        const bool onWall = std::abs(spot.position.x) < 1e-6 || std::abs(spot.position.x - 400.0) < 1e-6 ||
+                            std::abs(spot.position.y) < 1e-6 || std::abs(spot.position.y - 300.0) < 1e-6;
+        CHECK(onWall);
+        // Not in the door opening, x 150 to 186 on the bottom wall.
+        const bool inTheDoor = std::abs(spot.position.y) < 1e-6 && spot.position.x > 140.0 &&
+                               spot.position.x < 196.0;
+        CHECK_FALSE(inTheDoor);
+        CHECK(has(spot.reason, "wall"));
+    }
+    CHECK(spots[0].cost <= spots.back().cost);
+}
+
 TEST_CASE("rooms and walls inside a resolved reference are read where it is placed") {
     // The host holds only a duct; the building comes in as an xref placed
     // 1000 units up, with its own prefixed layers.

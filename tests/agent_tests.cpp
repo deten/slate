@@ -105,6 +105,14 @@ TEST_CASE("a reply with no fence is read as commands throughout") {
     CHECK(plan.commands[1].arguments.back() == "100,100");
 }
 
+TEST_CASE("an input in double quotes is one input, spaces and all") {
+    const AgentPlan plan = parseAgentPlan("TEXT 60,70 40 0 \"ZONE 1\"\nTEXT 0,0 5 0 T\n");
+    REQUIRE(plan.commands.size() == 2);
+    CHECK(plan.commands[0].arguments ==
+          std::vector<std::string>{"60,70", "40", "0", "ZONE 1"});
+    CHECK(plan.commands[1].arguments == std::vector<std::string>{"0,0", "5", "0", "T"});
+}
+
 TEST_CASE("blank lines, comments and casing do not matter") {
     const AgentPlan plan = parseAgentPlan(
         "```\n"
@@ -394,6 +402,43 @@ TEST_CASE("a query is answered from the drawing") {
 
     const std::string rooms = answerAgentQuery(*h.db, reading, AgentQuery{"ASK ROOMS", "ROOMS", ""});
     CHECK(rooms.find("Rooms (1):") != std::string::npos);
+}
+
+TEST_CASE("symbols, zones and wall spots are answered from the drawing") {
+    RoomHarness h;
+    // A thermostat in the office and a zone tag; the zone takes the walls.
+    h.db->addToModelSpace(std::make_unique<CircleEntity>(Vec3{40, 200, 0}, 8.0));
+    h.db->addToModelSpace(std::make_unique<TextEntity>(Vec3{36, 196, 0}, "T", 10.0));
+    h.db->addToModelSpace(std::make_unique<TextEntity>(Vec3{300, 40, 0}, "ZONE 4", 10.0));
+    const DrawingReading reading = readDrawing(*h.db);
+
+    const std::string symbols =
+        answerAgentQuery(*h.db, reading, AgentQuery{"ASK SYMBOLS T", "SYMBOLS", "T"});
+    CHECK(symbols.find("Symbols tagged T (1):") != std::string::npos);
+    CHECK(symbols.find("T at 40,200 on layer 0 (circle), in OFFICE 101") != std::string::npos);
+
+    const std::string zones = answerAgentQuery(*h.db, reading, AgentQuery{"ASK ZONES", "ZONES", ""});
+    CHECK(zones.find("Zones (1):") != std::string::npos);
+    CHECK(zones.find("ZONE 4: 400 x 300") != std::string::npos);
+    CHECK(zones.find("rooms OFFICE 101, symbols T x1") != std::string::npos);
+
+    const std::string zone =
+        answerAgentQuery(*h.db, reading, AgentQuery{"ASK ZONE zone 4", "ZONE", "zone 4"});
+    CHECK(zone.find("OFFICE 101: 833 sq ft") != std::string::npos);
+
+    const std::string missing =
+        answerAgentQuery(*h.db, reading, AgentQuery{"ASK ZONE 9", "ZONE", "9"});
+    CHECK(missing.find("No zone called \"9\". Zones are: ZONE 4;") != std::string::npos);
+
+    const std::string spots =
+        answerAgentQuery(*h.db, reading, AgentQuery{"ASK SPOTS ZONE 4", "SPOTS", "ZONE 4"});
+    CHECK(spots.find("OFFICE 101, wall spots best first:") != std::string::npos);
+    CHECK(spots.find("  1. ") != std::string::npos);
+    CHECK(spots.find("wall") != std::string::npos);
+
+    const std::string none =
+        answerAgentQuery(*h.db, reading, AgentQuery{"ASK SPOTS LOBBY", "SPOTS", "LOBBY"});
+    CHECK(none.find("No room or zone called \"LOBBY\"") != std::string::npos);
 }
 
 TEST_CASE("a model that asks for facts is answered and asked again") {

@@ -77,6 +77,33 @@ struct TitleBlockReading {
     std::vector<std::pair<std::string, std::string>> fields;
 };
 
+/// A small symbol: a letter in a circle, or a block named for what it is.
+/// Thermostats, sensors, switches and the like are drawn this way.
+struct SymbolReading {
+    /// "T", "S", or the block's name.
+    std::string tag;
+    Vec3 position;
+    std::string layer;
+    /// "circle" for a letter in a circle, "block" for a named block.
+    std::string kind;
+    Handle handle;
+};
+
+/// A zone: a tag such as "ZONE 3" or "VAV-2", the area it marks when a
+/// closed outline holds it, and what lies inside.
+struct ZoneReading {
+    std::string name;
+    Vec3 label;
+    bool bounded = false;
+    Box3 bounds;
+    std::vector<Vec3> outline;
+    /// Rooms whose labels lie inside the outline, by name and number.
+    std::vector<std::string> rooms;
+    /// Symbol tags inside the outline, with counts: "T" -> 1.
+    std::map<std::string, int> symbols;
+    std::vector<Handle> labelHandles;
+};
+
 /// An external reference as placed in model space: which file, where, how
 /// big, how turned. What a sibling sheet needs to place the same background
 /// the same way.
@@ -114,6 +141,8 @@ struct DrawingReading {
     ArchitectureReading architecture;
     std::vector<TitleBlockReading> titleBlocks;
     std::vector<ReferenceReading> references;
+    std::vector<SymbolReading> symbols;
+    std::vector<ZoneReading> zones;
     /// False when room boundaries were not traced: too many curves, or no
     /// budget. The rooms are then labels only.
     bool boundariesTraced = false;
@@ -123,7 +152,7 @@ struct DrawingReading {
 
     [[nodiscard]] bool empty() const noexcept {
         return rooms.empty() && systems.empty() && architecture.empty() && titleBlocks.empty() &&
-               references.empty();
+               references.empty() && symbols.empty() && zones.empty();
     }
 
     /// The reading in prose: what DESCRIBE prints and what the assistant is
@@ -145,6 +174,31 @@ struct DrawingReading {
 
 /// "wall", "door" or "window" for a layer named for one of them, else "".
 [[nodiscard]] std::string shellPartNameOf(std::string_view layerName);
+
+/// Whether text is a zone tag: "ZONE 3", "ZONE-3", "Z-3", "VAV-2", "VAV 2".
+/// The zone's name comes back through `name` in a settled form: "ZONE 3",
+/// "VAV-2".
+[[nodiscard]] bool looksLikeZoneName(std::string_view text, std::string* name = nullptr);
+
+/// A place a wall-mounted device could go, with the reason it is a good
+/// one, for the assistant to choose among.
+struct SpotReading {
+    Vec3 position;
+    /// The wall's direction at the spot, so a symbol can face into the room.
+    Vec3 along;
+    std::string reason;
+    /// Lower is better: near the door, on an inside wall, away from
+    /// diffusers and windows.
+    double cost = 0.0;
+};
+
+/// Candidate spots on the walls of a bounded room: on interior walls, clear
+/// of doors, windows and air terminals, nearest the door first. At most
+/// `count`. Empty for a room without walls.
+[[nodiscard]] std::vector<SpotReading> candidateSpots(const Database& db,
+                                                      const DrawingReading& reading,
+                                                      const RoomReading& room,
+                                                      std::size_t count = 5);
 
 /// Whether a piece of text reads as a room name rather than a note, a tag or
 /// a number: "OFFICE", "CONF. #1", "STAFF WORK AREA" yes; "T", "CFM", "150",

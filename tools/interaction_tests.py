@@ -1009,6 +1009,37 @@ def test_the_set_is_checked_and_the_index_sheet_is_written_from_the_list(work: P
            f"the index rows are wrong: {texts}")
 
 
+def test_the_assistant_places_a_thermostat_from_zones_and_spots(work: Path) -> None:
+    """The thermostat request as a canned exchange: the model asks for the
+    zones, sees the one with no symbol, asks for wall spots in it, and
+    draws a T in a circle at the first spot with the zone's label."""
+    reply = canned(work, "thermostat",
+                   "```\nASK ZONES\n```\n"
+                   "===\n"
+                   "```\nASK SPOTS ZONE 1\n```\n"
+                   "===\n"
+                   "```\nCIRCLE 100,0 50\nTEXT 80,-25 50 0 T\nTEXT 60,70 40 0 \"ZONE 1\"\n```\n")
+    log, saved = run(work, "agent-thermostat", [
+        "--run", "RECTANGLE", "--run", "0,0", "--run", "4000,3000",
+        "--run", "TEXT", "--run", "1500,1600", "--run", "100", "--run", "0",
+        "--run", "OFFICE", "--run", "",
+        "--run", "TEXT", "--run", "1500,200", "--run", "100", "--run", "0",
+        "--run", "ZONE 1", "--run", "",
+        "--agent-reply", str(reply),
+        "--agent", "make sure every zone has a thermostat and label it",
+    ])
+    expect("Asked: ASK ZONES" in log and "Asked: ASK SPOTS ZONE 1" in log,
+           f"the two fact rounds were not logged:\n{log}")
+    expect("3 of 3 step(s) completed" in log, f"the plan did not run:\n{log}")
+    texts = [r.get("1") for r in records(saved, "TEXT")]
+    expect("T" in texts and texts.count("ZONE 1") == 2, f"the symbol was not drawn: {texts}")
+    expect(len(records(saved, "CIRCLE")) == 1, "the circle was not drawn")
+
+    # What the assistant was told, on the second round, carried the spots.
+    told = (work / "agent-thermostat.dxf")
+    expect(told.exists(), "the drawing was not saved")
+
+
 def test_the_assistant_learns_house_standards_from_a_reference_folder(work: Path) -> None:
     """A folder of the office's drawings teaches the layers it uses.
 
@@ -1652,6 +1683,7 @@ SCENARIOS = [
     test_sheet_files_are_made_from_the_template_with_the_title_block_filled,
     test_a_background_is_overlaid_the_office_way,
     test_the_set_is_checked_and_the_index_sheet_is_written_from_the_list,
+    test_the_assistant_places_a_thermostat_from_zones_and_spots,
     test_two_hot_grips_on_one_object_stretch_together,
     test_two_hot_grips_move_the_object_once,
     test_two_midpoint_grips_each_add_a_corner,
