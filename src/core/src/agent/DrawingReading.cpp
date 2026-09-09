@@ -393,7 +393,18 @@ DrawingReading readDrawing(const Database& db, const DrawingReadingOptions& opti
             continue;
         }
         const auto* block = db.get<BlockTableRecord>(insert->blockHandle);
-        if (block == nullptr || !block->isXref() || block->xrefStatus != XrefStatus::Resolved) {
+        if (block == nullptr || !block->isXref()) {
+            continue;
+        }
+        ReferenceReading reference;
+        reference.name = block->name;
+        reference.path = block->xrefPath;
+        reference.resolved = block->xrefStatus == XrefStatus::Resolved;
+        reference.position = insert->position;
+        reference.scale = insert->scale.x;
+        reference.rotation = insert->rotation;
+        reading.references.push_back(std::move(reference));
+        if (!reference.resolved) {
             continue;
         }
         const Mat4 transform = insert->blockTransform();
@@ -909,6 +920,18 @@ std::string DrawingReading::describe() const {
         if (systems.size() > kMaxSystems) {
             out << "  and " << (systems.size() - kMaxSystems) << " more\n";
         }
+    }
+
+    if (!references.empty()) {
+        out << "References:";
+        for (std::size_t i = 0; i < references.size() && i < 12; ++i) {
+            const ReferenceReading& reference = references[i];
+            out << (i == 0 ? " " : "; ") << reference.name << " at " << point(reference.position)
+                << " scale " << num(reference.scale) << " rotation "
+                << num(reference.rotation * 180.0 / 3.14159265358979323846)
+                << (reference.resolved ? "" : " (not found)");
+        }
+        out << "\n";
     }
 
     for (const TitleBlockReading& title : titleBlocks) {

@@ -45,6 +45,9 @@ struct Project {
     std::string sheetTemplate;
     /// Anything the drawings cannot say: conventions, client rules.
     std::string notes;
+    /// Layer name patterns, with * and ?, frozen in a background when it is
+    /// attached: the architect's notes and dimensions, usually.
+    std::vector<std::string> freezeInBackgrounds;
     std::vector<ProjectSheet> sheets;
     std::vector<ProjectBackground> backgrounds;
 
@@ -81,5 +84,9 @@ bool saveProject(const Project& project, const std::filesystem::path& path,
 
 /// Compare sheet numbers the way a set is ordered: "M2.1" before "M10.1".
 [[nodiscard]] bool sheetNumberLess(std::string_view a, std::string_view b);
+
+/// Whether a layer name matches a pattern with * (any run) and ? (any one
+/// character), without regard to case: "A-ANNO*" matches "A-ANNO-TEXT".
+[[nodiscard]] bool layerPatternMatches(std::string_view pattern, std::string_view name);
 
 }  // namespace cad

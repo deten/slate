@@ -918,6 +918,53 @@ def test_sheet_files_are_made_from_the_template_with_the_title_block_filled(work
     expect("0 sheet file(s) made." in log, f"existing sheets were remade:\n{log}")
 
 
+def test_a_background_is_overlaid_the_office_way(work: Path) -> None:
+    """The project's background goes on a sheet as an overlay, its noted
+    layers frozen, and the next sheet takes the placement from the first."""
+    folder = work / "bgset"
+    folder.mkdir(exist_ok=True)
+    # The architect's plan: a wall and a note on their own layers.
+    run(work, "bg-arch", [
+        "--run", "LAYER", "--run", "A-WALL", "--run", "1",
+        "--run", "LINE", "--run", "0,0", "--run", "4000,0", "--run", "",
+        "--run", "LAYER", "--run", "A-ANNO-TEXT", "--run", "2",
+        "--run", "TEXT", "--run", "100,100", "--run", "100", "--run", "0",
+        "--run", "NOTE", "--run", "",
+        "--save-as", str(folder / "A1.1.dxf"),
+    ], save=False)
+    for sheet in ("M1.1", "M2.1"):
+        run(work, f"bg-{sheet}", [
+            "--run", "LINE", "--run", "0,0", "--run", "100,100", "--run", "",
+            "--save-as", str(folder / f"{sheet}.dxf"),
+        ], save=False)
+    (folder / "project.slate").write_text(
+        "project: Background Set\n"
+        "discipline: M\n"
+        "freeze: A-ANNO*\n"
+        "background: A1.1 | A1.1.dxf\n"
+        "sheet: M1.1 | Plan | M1.1.dxf |  | A1.1 |\n"
+        "sheet: M2.1 | Ducts | M2.1.dxf |  | A1.1 |\n", encoding="utf-8")
+
+    log, _ = run(work, "bg-first", [
+        "--open", str(folder / "M1.1.dxf"), "--attach-background", "",
+        "--save-as", str(folder / "M1.1.dxf"),
+    ], save=False)
+    expect("Background A1.1 overlaid at 0,0 scale 1 rotation 0; 1 layer(s) frozen." in log,
+           f"the background was not overlaid as expected:\n{log}")
+    layers = {r.get("2"): r for r in records(folder / "M1.1.dxf", "LAYER")}
+    frozen = layers.get("A1.1|A-ANNO-TEXT", {})
+    expect(int(frozen.get("70", "0")) & 1 == 1, f"the note layer was not frozen: {frozen}")
+    walls = layers.get("A1.1|A-WALL", {})
+    expect(int(walls.get("70", "0")) & 1 == 0, f"the wall layer was frozen: {walls}")
+
+    log, _ = run(work, "bg-second", [
+        "--open", str(folder / "M2.1.dxf"), "--attach-background", "A1.1",
+        "--save-as", str(folder / "M2.1.dxf"),
+    ], save=False)
+    expect("(as on sheet M1.1)" in log, f"the placement was not taken from the sibling:\n{log}")
+    expect(len(records(folder / "M2.1.dxf", "INSERT")) == 1, "the reference was not placed once")
+
+
 def test_the_assistant_learns_house_standards_from_a_reference_folder(work: Path) -> None:
     """A folder of the office's drawings teaches the layers it uses.
 
@@ -1559,6 +1606,7 @@ SCENARIOS = [
     test_the_assistant_can_ask_for_facts_and_ask_the_user,
     test_a_project_beside_the_drawing_is_told_to_the_assistant,
     test_sheet_files_are_made_from_the_template_with_the_title_block_filled,
+    test_a_background_is_overlaid_the_office_way,
     test_two_hot_grips_on_one_object_stretch_together,
     test_two_hot_grips_move_the_object_once,
     test_two_midpoint_grips_each_add_a_corner,

@@ -118,6 +118,11 @@ public:
     /// Make the file of every listed sheet that has none, from the project's
     /// template. What the Project tool's button does, for scripted runs.
     void makeSheets();
+    /// Attach a background from the project to the open drawing the office
+    /// way: as an overlay, placed as the sibling sheets place it, with the
+    /// project's frozen layers frozen. An empty name means the background
+    /// the open sheet is listed with.
+    void attachBackground(const QString& name);
     /// Print what the assistant would be told, without asking it.
     void showAgentContext();
     /// The assistant, made on first use.

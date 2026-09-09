@@ -79,6 +79,27 @@ TEST_CASE("unknown keys and comments are passed over, and a bar cannot break a f
     CHECK(back.sheets[0].file == "M1.1.dwg");
 }
 
+TEST_CASE("layer patterns match the way layer filters do") {
+    CHECK(layerPatternMatches("A-ANNO*", "A-ANNO-TEXT"));
+    CHECK(layerPatternMatches("a-anno*", "A-ANNO"));
+    CHECK_FALSE(layerPatternMatches("A-ANNO*", "A-WALL"));
+    CHECK(layerPatternMatches("*DIM*", "A-DIMS-01"));
+    CHECK(layerPatternMatches("A-WALL-?", "A-WALL-N"));
+    CHECK_FALSE(layerPatternMatches("A-WALL-?", "A-WALL-NEW"));
+    CHECK(layerPatternMatches("*", ""));
+    CHECK_FALSE(layerPatternMatches("", "A"));
+}
+
+TEST_CASE("the layers to freeze in backgrounds go through the file") {
+    Project project;
+    project.name = "Set";
+    project.freezeInBackgrounds = {"A-ANNO*", "A-DIMS*"};
+    const Project back = parseProject(formatProject(project));
+    REQUIRE(back.freezeInBackgrounds.size() == 2);
+    CHECK(back.freezeInBackgrounds[0] == "A-ANNO*");
+    CHECK(back.freezeInBackgrounds[1] == "A-DIMS*");
+}
+
 TEST_CASE("an empty project reads back empty") {
     CHECK(parseProject("").empty());
     CHECK(parseProject(formatProject(Project{})).empty());

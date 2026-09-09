@@ -449,6 +449,52 @@ int ProjectIndex::makeMissingSheetFiles(QStringList* made, QStringList* problems
     return count;
 }
 
+bool ProjectIndex::siblingPlacement(const ProjectBackground& background,
+                                    const QString& exceptFile, Placement* placement) {
+    // A reference is named by its file's stem, and a sheet's reading lists
+    // its references as "NAME at x,y scale s rotation r".
+    const QString stem = QFileInfo{QString::fromStdString(background.file)}.completeBaseName();
+    if (stem.isEmpty()) {
+        return false;
+    }
+    const QString except = exceptFile.isEmpty() ? QString{} : QFileInfo{exceptFile}.absoluteFilePath();
+    for (const ProjectSheet& sheet : project_.sheets) {
+        if (sheet.background != background.name) {
+            continue;
+        }
+        const QString absolute = absolutePath(QString::fromStdString(sheet.file));
+        if (absolute.isEmpty() || QFileInfo{absolute}.absoluteFilePath() == except) {
+            continue;
+        }
+        const QString reading = readingOf(sheet);
+        for (const QString& line : reading.split(QLatin1Char('\n'))) {
+            if (!line.startsWith(QStringLiteral("References:"))) {
+                continue;
+            }
+            for (const QString& item : line.mid(11).split(QLatin1Char(';'))) {
+                const QStringList words = item.trimmed().split(QLatin1Char(' '), Qt::SkipEmptyParts);
+                // NAME at x,y scale s rotation r [(not found)]
+                if (words.size() < 7 || words[0].compare(stem, Qt::CaseInsensitive) != 0) {
+                    continue;
+                }
+                const QStringList xy = words[2].split(QLatin1Char(','));
+                if (xy.size() != 2) {
+                    continue;
+                }
+                if (placement != nullptr) {
+                    placement->x = xy[0].toDouble();
+                    placement->y = xy[1].toDouble();
+                    placement->scale = words[4].toDouble();
+                    placement->rotationDegrees = words[6].toDouble();
+                    placement->fromSheet = QString::fromStdString(sheet.number);
+                }
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
 std::optional<std::string> ProjectIndex::answer(const AgentQuery& query) {
     if (query.kind != "SHEET" && query.kind != "PROJECT") {
         return std::nullopt;

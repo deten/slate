@@ -90,8 +90,29 @@ That is what makes questions across sheets possible: which sheets show the
 mechanical room, whether every plan sheet has the current background, what
 else refers to a piece of equipment that moved.
 
+## Backgrounds
+
+A plan sheet is drawn over another discipline's plan. The project lists
+those backgrounds once, by a short name and a file, and each sheet says
+which one stands behind it. **Attach background** in the Project panel
+overlays the open sheet's background the office way:
+
+- as an overlay, not an attachment, so a sheet that references this one
+  does not get the background twice;
+- placed as the sibling sheets place it, so every plan of the set lines
+  up, or at the origin when this is the first;
+- with the layers named in **Freeze in backgrounds** frozen: the
+  architect's notes and dimensions, usually. Patterns take `*` and `?`,
+  and match the reference's own layer names, so `A-ANNO*` freezes
+  `A1.1|A-ANNO-TEXT`.
+
+The panel also says when a background's file is newer than a sheet that
+uses it, which is when the sheet needs a look.
+
 ## Scripted runs
 
 `--project <file>` uses a project file for the session, whatever sits
 beside the drawing. With `--agent-context` it prints what the assistant
-would be told, project included.
+would be told, project included. `--make-sheets` makes the missing sheet
+files, and `--attach-background <name>` overlays a background on the open
+drawing, an empty name meaning the sheet's own.

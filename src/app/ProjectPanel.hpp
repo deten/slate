@@ -32,6 +32,8 @@ Q_SIGNALS:
     void openSheetRequested(const QString& path);
     /// The user wants the project tool.
     void editRequested();
+    /// The user wants the open sheet's background overlaid the office way.
+    void attachBackgroundRequested();
 
 private:
     void onItemActivated(QTreeWidgetItem* item, int column);

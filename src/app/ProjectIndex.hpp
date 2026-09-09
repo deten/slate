@@ -82,6 +82,19 @@ public:
     /// many were made; the trouble with the rest goes to `problems`.
     int makeMissingSheetFiles(QStringList* made, QStringList* problems);
 
+    /// Where a sibling sheet placed this background: its insertion point,
+    /// scale and rotation in degrees, from the sheets' readings. False when
+    /// no sheet in the set has it yet.
+    struct Placement {
+        double x = 0.0;
+        double y = 0.0;
+        double scale = 1.0;
+        double rotationDegrees = 0.0;
+        QString fromSheet;
+    };
+    [[nodiscard]] bool siblingPlacement(const ProjectBackground& background,
+                                        const QString& exceptFile, Placement* placement);
+
 private:
     struct Entry {
         QString key;

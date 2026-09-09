@@ -4,6 +4,8 @@
 #include "ProjectDialog.hpp"
 #include "ProjectIndex.hpp"
 #include "ProjectPanel.hpp"
+#include "cad/db/InsertEntity.hpp"
+#include "cad/project/Project.hpp"
 
 #include <array>
 #include <functional>
@@ -341,6 +343,8 @@ void MainWindow::buildUi() {
     connect(projectPanel_, &ProjectPanel::openSheetRequested, this,
             [this](const QString& path) { openFile(path); });
     connect(projectPanel_, &ProjectPanel::editRequested, this, &MainWindow::onProject);
+    connect(projectPanel_, &ProjectPanel::attachBackgroundRequested, this,
+            [this] { attachBackground(QString{}); });
 
     coordinateLabel_ = new QLabel{"0.000, 0.000", this};
     zoomLabel_ = new QLabel{"100%", this};
@@ -1945,6 +1949,103 @@ void MainWindow::makeSheets() {
     }
     log(tr("%n sheet file(s) made.", "", count));
     refreshProjectPanel();
+}
+
+void MainWindow::attachBackground(const QString& name) {
+    if (document_ == nullptr) {
+        log(tr("! No drawing is open."));
+        return;
+    }
+    if (project_ == nullptr || !project_->isOpen()) {
+        log(tr("! No project is open."));
+        return;
+    }
+    const Project& project = project_->project();
+    const QString drawingPath = QString::fromStdString(document_->filePath);
+    QString wanted = name.trimmed();
+    if (wanted.isEmpty()) {
+        const ProjectSheet* sheet = project_->sheetForFile(drawingPath);
+        if (sheet == nullptr || sheet->background.empty()) {
+            log(tr("! The open drawing is not listed with a background. Name one."));
+            return;
+        }
+        wanted = QString::fromStdString(sheet->background);
+    }
+    const ProjectBackground* background = project.findBackground(wanted.toStdString());
+    if (background == nullptr) {
+        log(tr("! The project has no background called %1.").arg(wanted));
+        return;
+    }
+    const QString file = project_->absolutePath(QString::fromStdString(background->file));
+    if (!QFileInfo::exists(file)) {
+        log(tr("! Background %1: file not found (%2).").arg(wanted, file));
+        return;
+    }
+
+    // Overlaid, not attached: a background seen through a further reference
+    // would show up twice on the next sheet that references this one.
+    Handle block;
+    const std::string problem = attachExternalReference(file.toStdString(), true, &block);
+    if (!problem.empty()) {
+        log(tr("! %1").arg(QString::fromStdString(problem)));
+        return;
+    }
+
+    // Placed as the sibling sheets place it, so every plan of the set lines
+    // up; at the origin when it is the first.
+    ProjectIndex::Placement placement;
+    const bool fromSibling = project_->siblingPlacement(*background, drawingPath, &placement);
+
+    int frozen = 0;
+    document_->transactions().run("Attach background", [&](Transaction& transaction) {
+        Database& db = document_->db();
+        bool placed = false;
+        for (const Entity* entity : db.entitiesIn(db.modelSpace())) {
+            const auto* insert = dynamic_cast<const InsertEntity*>(entity);
+            if (insert != nullptr && !insert->erased && insert->blockHandle == block) {
+                placed = true;
+            }
+        }
+        if (!placed) {
+            auto reference = std::make_unique<InsertEntity>(
+                block, Vec3{placement.x, placement.y, 0.0});
+            reference->scale = Vec3{placement.scale, placement.scale, placement.scale};
+            reference->rotation = placement.rotationDegrees * kPi / 180.0;
+            transaction.addEntity(std::move(reference), db.modelSpace());
+        }
+        // The reference's layers are named "REF|LAYER"; the project says
+        // which of the reference's own layers to freeze.
+        const auto* record = db.get<BlockTableRecord>(block);
+        const std::string prefix = record == nullptr ? std::string{} : record->name + "|";
+        for (const Handle handle : db.layers().handles()) {
+            auto* layer = db.get<Layer>(handle);
+            if (layer == nullptr || layer->erased || layer->name.rfind(prefix, 0) != 0) {
+                continue;
+            }
+            const std::string own = layer->name.substr(prefix.size());
+            for (const std::string& pattern : project.freezeInBackgrounds) {
+                if (layerPatternMatches(pattern, own) && !layer->isFrozen) {
+                    transaction.openForWrite(*layer);
+                    layer->isFrozen = true;
+                    ++frozen;
+                    break;
+                }
+            }
+        }
+    });
+
+    log(tr("Background %1 overlaid at %2,%3 scale %4 rotation %5%6; %n layer(s) frozen.", "",
+           frozen)
+            .arg(wanted)
+            .arg(placement.x)
+            .arg(placement.y)
+            .arg(placement.scale)
+            .arg(placement.rotationDegrees)
+            .arg(fromSibling ? tr(" (as on sheet %1)").arg(placement.fromSheet) : QString{}));
+    refreshLayerPanel();
+    canvas_->update();
+    updateWindowTitle();
+    onCommandStateChanged();
 }
 
 AgentService& MainWindow::ensureAgent() {

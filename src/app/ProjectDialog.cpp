@@ -77,6 +77,9 @@ ProjectDialog::ProjectDialog(ProjectIndex& index, const QString& folder, QWidget
     form->addRow(tr("Project"), name_);
     form->addRow(tr("Discipline"), discipline_);
     form->addRow(tr("Sheet template"), template_);
+    freeze_ = new QLineEdit{this};
+    freeze_->setPlaceholderText(tr("Layers frozen when a background is attached: A-ANNO*, A-DIMS*"));
+    form->addRow(tr("Freeze in backgrounds"), freeze_);
     layout->addLayout(form);
 
     auto* sheetsLabel = new QLabel{tr("Sheets"), this};
@@ -160,6 +163,11 @@ void ProjectDialog::fill(const Project& project) {
     name_->setText(QString::fromStdString(project.name));
     discipline_->setText(QString::fromStdString(project.discipline));
     template_->setText(QString::fromStdString(project.sheetTemplate));
+    QStringList patterns;
+    for (const std::string& pattern : project.freezeInBackgrounds) {
+        patterns << QString::fromStdString(pattern);
+    }
+    freeze_->setText(patterns.join(QStringLiteral(", ")));
     notes_->setPlainText(QString::fromStdString(project.notes));
     sheets_->setRowCount(0);
     for (const ProjectSheet& sheet : project.sheets) {
@@ -194,6 +202,11 @@ Project ProjectDialog::project() const {
     project.name = name_->text().trimmed().toStdString();
     project.discipline = discipline_->text().trimmed().toStdString();
     project.sheetTemplate = template_->text().trimmed().toStdString();
+    for (const QString& pattern : freeze_->text().split(QLatin1Char(','), Qt::SkipEmptyParts)) {
+        if (!pattern.trimmed().isEmpty()) {
+            project.freezeInBackgrounds.push_back(pattern.trimmed().toStdString());
+        }
+    }
     project.notes = notes_->toPlainText().trimmed().toStdString();
     for (int row = 0; row < sheets_->rowCount(); ++row) {
         ProjectSheet sheet;

@@ -36,12 +36,17 @@ ProjectPanel::ProjectPanel(QWidget* parent) : QWidget(parent) {
 
     auto* buttons = new QHBoxLayout;
     open_ = new QPushButton{tr("Open sheet"), this};
+    auto* background = new QPushButton{tr("Attach background"), this};
+    background->setToolTip(tr("Overlay the open sheet's background as the office does: placed "
+                              "as on the sibling sheets, with the project's layers frozen."));
     auto* edit = new QPushButton{tr("Project…"), this};
     edit->setToolTip(tr("Make or change the project: its sheets, backgrounds and notes."));
     buttons->addWidget(open_);
+    buttons->addWidget(background);
     buttons->addStretch();
     buttons->addWidget(edit);
     layout->addLayout(buttons);
+    connect(background, &QPushButton::clicked, this, &ProjectPanel::attachBackgroundRequested);
 
     note_ = new QLabel{this};
     note_->setWordWrap(true);

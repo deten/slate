@@ -122,6 +122,29 @@ bool sheetNumberLess(std::string_view a, std::string_view b) {
     return (a.size() - i) < (b.size() - j);
 }
 
+bool layerPatternMatches(std::string_view pattern, std::string_view name) {
+    if (pattern.empty()) {
+        return name.empty();
+    }
+    if (pattern.front() == '*') {
+        for (std::size_t i = 0; i <= name.size(); ++i) {
+            if (layerPatternMatches(pattern.substr(1), name.substr(i))) {
+                return true;
+            }
+        }
+        return false;
+    }
+    if (name.empty()) {
+        return false;
+    }
+    const char p = static_cast<char>(std::toupper(static_cast<unsigned char>(pattern.front())));
+    const char n = static_cast<char>(std::toupper(static_cast<unsigned char>(name.front())));
+    if (pattern.front() == '?' || p == n) {
+        return layerPatternMatches(pattern.substr(1), name.substr(1));
+    }
+    return false;
+}
+
 Project parseProject(std::string_view text) {
     Project project;
     std::string body{text};
@@ -147,6 +170,12 @@ Project parseProject(std::string_view text) {
             project.sheetTemplate = value;
         } else if (key == "note") {
             notes += (notes.empty() ? "" : "\n") + value;
+        } else if (key == "freeze") {
+            for (const std::string& pattern : fields(value)) {
+                if (!pattern.empty()) {
+                    project.freezeInBackgrounds.push_back(pattern);
+                }
+            }
         } else if (key == "sheet") {
             const std::vector<std::string> parts = fields(value);
             ProjectSheet sheet;
@@ -192,6 +221,13 @@ std::string formatProject(const Project& project) {
                 out << "note: " << clean(line) << "\n";
             }
         }
+    }
+    if (!project.freezeInBackgrounds.empty()) {
+        out << "freeze:";
+        for (std::size_t i = 0; i < project.freezeInBackgrounds.size(); ++i) {
+            out << (i == 0 ? " " : " | ") << clean(project.freezeInBackgrounds[i]);
+        }
+        out << "\n";
     }
     if (!project.backgrounds.empty()) {
         out << "\n# background: name | file\n";

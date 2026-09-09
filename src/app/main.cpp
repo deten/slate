@@ -84,6 +84,10 @@ int main(int argc, char* argv[]) {
         "file"};
     const QCommandLineOption makeSheetsOption{
         "make-sheets", "Make the file of every listed sheet that has none, from the template."};
+    const QCommandLineOption attachBackgroundOption{
+        "attach-background",
+        "Overlay a background from the project on the open drawing; empty for the sheet's own.",
+        "name"};
     const QCommandLineOption panelOption{
         "panel", "Show a dock panel: layers, properties, history, references.", "name"};
     const QCommandLineOption layoutOption{
@@ -134,6 +138,7 @@ int main(int argc, char* argv[]) {
     parser.addOption(agentContextOption);
     parser.addOption(projectOption);
     parser.addOption(makeSheetsOption);
+    parser.addOption(attachBackgroundOption);
     parser.addOption(panelOption);
     parser.addOption(layoutOption);
     parser.addOption(menuPickOption);
@@ -168,6 +173,7 @@ int main(int argc, char* argv[]) {
                           parser.isSet(agentReferenceOption) ||
                           parser.isSet(agentContextOption) || parser.isSet(projectOption) ||
                           parser.isSet(makeSheetsOption) ||
+                          parser.isSet(attachBackgroundOption) ||
                           parser.isSet(dumpMenusOption) ||
                           parser.isSet(sizeOption) || parser.isSet(canvasOption);
     if (scripted || parser.isSet(noRecoveryOption)) {
@@ -251,6 +257,7 @@ int main(int argc, char* argv[]) {
                                     argument == "--panel" ||
                                     argument == "--agent" || argument == "--agent-reply" ||
                                     argument == "--agent-reference" || argument == "--project" ||
+                                    argument == "--attach-background" ||
                                     argument == "--double-click" || argument == "--right-hold" || argument == "--snap-menu" ||
                                     argument == "--type" || argument == "--key" ||
                                     argument == "--cycle" || argument == "--tab" ||
@@ -289,6 +296,8 @@ int main(int argc, char* argv[]) {
                 window.useAgentReference(value);
             } else if (argument == "--project") {
                 window.useProject(value);
+            } else if (argument == "--attach-background") {
+                window.attachBackground(value);
             } else if (argument == "--agent") {
                 window.runAgent(value);
             } else if (argument == "--panel") {

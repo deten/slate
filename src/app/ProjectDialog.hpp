@@ -59,6 +59,7 @@ private:
     QLineEdit* name_ = nullptr;
     QLineEdit* discipline_ = nullptr;
     QLineEdit* template_ = nullptr;
+    QLineEdit* freeze_ = nullptr;
     QPlainTextEdit* notes_ = nullptr;
     QTableWidget* sheets_ = nullptr;
     QTableWidget* backgrounds_ = nullptr;

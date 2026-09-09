@@ -77,6 +77,19 @@ struct TitleBlockReading {
     std::vector<std::pair<std::string, std::string>> fields;
 };
 
+/// An external reference as placed in model space: which file, where, how
+/// big, how turned. What a sibling sheet needs to place the same background
+/// the same way.
+struct ReferenceReading {
+    std::string name;
+    std::string path;
+    bool resolved = false;
+    Vec3 position;
+    double scale = 1.0;
+    /// Radians.
+    double rotation = 0.0;
+};
+
 struct DrawingReadingOptions {
     /// Tracing room boundaries stops when this runs out; the rooms left are
     /// reported by their labels only. A model waiting on a request should
@@ -100,6 +113,7 @@ struct DrawingReading {
     std::vector<SystemReading> systems;
     ArchitectureReading architecture;
     std::vector<TitleBlockReading> titleBlocks;
+    std::vector<ReferenceReading> references;
     /// False when room boundaries were not traced: too many curves, or no
     /// budget. The rooms are then labels only.
     bool boundariesTraced = false;
@@ -108,7 +122,8 @@ struct DrawingReading {
     double areaDivisor = 1.0;
 
     [[nodiscard]] bool empty() const noexcept {
-        return rooms.empty() && systems.empty() && architecture.empty() && titleBlocks.empty();
+        return rooms.empty() && systems.empty() && architecture.empty() && titleBlocks.empty() &&
+               references.empty();
     }
 
     /// The reading in prose: what DESCRIBE prints and what the assistant is

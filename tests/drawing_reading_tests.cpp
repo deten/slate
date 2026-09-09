@@ -305,6 +305,13 @@ TEST_CASE("rooms and walls inside a resolved reference are read where it is plac
     CHECK(reading.rooms[0].bounds.center().y == doctest::Approx(1150.0));
     CHECK(reading.architecture.wallLayers.at("A-WALL-EXT") == 4);
     CHECK(has(reading.describe(), "LAB 201: 833 sq ft, 400 x 300, centre 200,1150"));
+    // Where the reference sits is recorded, so a sibling sheet can place
+    // the same background the same way.
+    REQUIRE(reading.references.size() == 1);
+    CHECK(reading.references[0].name == "XM");
+    CHECK(reading.references[0].resolved);
+    CHECK(reading.references[0].position.y == doctest::Approx(1000.0));
+    CHECK(has(reading.describe(), "References: XM at 0,1000 scale 1 rotation 0"));
 
     // An unresolved reference brings nothing: there is nothing to read.
     xref.xrefStatus = XrefStatus::NotFound;
