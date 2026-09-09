@@ -1929,6 +1929,24 @@ void MainWindow::useProject(const QString& path) {
     refreshProjectPanel();
 }
 
+void MainWindow::makeSheets() {
+    if (project_ == nullptr || !project_->isOpen()) {
+        log(tr("! No project is open."));
+        return;
+    }
+    QStringList made;
+    QStringList problems;
+    const int count = project_->makeMissingSheetFiles(&made, &problems);
+    for (const QString& path : made) {
+        log(tr("Made %1").arg(QDir::toNativeSeparators(path)));
+    }
+    for (const QString& problem : problems) {
+        log(tr("! %1").arg(problem));
+    }
+    log(tr("%n sheet file(s) made.", "", count));
+    refreshProjectPanel();
+}
+
 AgentService& MainWindow::ensureAgent() {
     if (agent_ == nullptr) {
         agent_ = std::make_unique<AgentService>(config_, translator_.get(), settingsDirectory());

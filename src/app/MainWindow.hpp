@@ -115,6 +115,9 @@ public:
     /// Use this project file for the session, whatever sits beside the
     /// drawing. For scripted runs and for a set kept away from its files.
     void useProject(const QString& path);
+    /// Make the file of every listed sheet that has none, from the project's
+    /// template. What the Project tool's button does, for scripted runs.
+    void makeSheets();
     /// Print what the assistant would be told, without asking it.
     void showAgentContext();
     /// The assistant, made on first use.

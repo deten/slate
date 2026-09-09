@@ -82,6 +82,8 @@ int main(int argc, char* argv[]) {
     const QCommandLineOption projectOption{
         "project", "Use this project file for the session, whatever sits beside the drawing.",
         "file"};
+    const QCommandLineOption makeSheetsOption{
+        "make-sheets", "Make the file of every listed sheet that has none, from the template."};
     const QCommandLineOption panelOption{
         "panel", "Show a dock panel: layers, properties, history, references.", "name"};
     const QCommandLineOption layoutOption{
@@ -131,6 +133,7 @@ int main(int argc, char* argv[]) {
     parser.addOption(agentReferenceOption);
     parser.addOption(agentContextOption);
     parser.addOption(projectOption);
+    parser.addOption(makeSheetsOption);
     parser.addOption(panelOption);
     parser.addOption(layoutOption);
     parser.addOption(menuPickOption);
@@ -164,6 +167,7 @@ int main(int argc, char* argv[]) {
                           parser.isSet(agentOption) || parser.isSet(agentReplyOption) ||
                           parser.isSet(agentReferenceOption) ||
                           parser.isSet(agentContextOption) || parser.isSet(projectOption) ||
+                          parser.isSet(makeSheetsOption) ||
                           parser.isSet(dumpMenusOption) ||
                           parser.isSet(sizeOption) || parser.isSet(canvasOption);
     if (scripted || parser.isSet(noRecoveryOption)) {
@@ -234,6 +238,10 @@ int main(int argc, char* argv[]) {
             }
             if (argument == "--agent-context") {
                 window.showAgentContext();
+                continue;
+            }
+            if (argument == "--make-sheets") {
+                window.makeSheets();
                 continue;
             }
             const bool takesValue = argument == "--run" || argument == "--hover" ||

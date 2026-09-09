@@ -5,7 +5,11 @@
 #include <QFileInfo>
 #include <QTextStream>
 
+#include <algorithm>
+
 #include "cad/agent/DrawingReading.hpp"
+#include "cad/db/TextEntities.hpp"
+#include "cad/io/DxfWriter.hpp"
 #include "cad/io/XrefLoader.hpp"
 
 namespace cad::app {
@@ -310,6 +314,139 @@ QString ProjectIndex::digest(QStringList* problems) {
     }
     text += QStringLiteral("Ask SHEET <number> for what a sheet holds.\n");
     return text;
+}
+
+QString ProjectIndex::makeSheetFile(const ProjectSheet& sheet, QString* error) {
+    const auto fail = [&](const QString& why) {
+        if (error != nullptr) {
+            *error = QStringLiteral("%1: %2").arg(QString::fromStdString(sheet.number), why);
+        }
+        return QString{};
+    };
+    if (!isOpen()) {
+        return fail(QStringLiteral("no project is open"));
+    }
+    if (project_.sheetTemplate.empty()) {
+        return fail(QStringLiteral("the project has no sheet template"));
+    }
+    const QString templatePath = absolutePath(QString::fromStdString(project_.sheetTemplate));
+    if (!QFileInfo::exists(templatePath)) {
+        return fail(QStringLiteral("template not found (%1)").arg(templatePath));
+    }
+    // The file name follows the sheet: what the list says, or the number
+    // with the template's extension.
+    QString stored = QString::fromStdString(sheet.file);
+    if (stored.isEmpty()) {
+        stored = QString::fromStdString(sheet.number) + QLatin1Char('.') +
+                 QFileInfo{templatePath}.suffix();
+    }
+    const QString target = absolutePath(stored);
+    if (QFileInfo::exists(target)) {
+        return fail(QStringLiteral("%1 already exists").arg(stored));
+    }
+
+    try {
+        io::XrefLoadOptions options;
+        options.translator = translator_;
+        options.maxDepth = 0;
+        io::DrawingLoadResult loaded = io::loadDrawingWithReferences(
+            std::filesystem::path{templatePath.toStdWString()}, options);
+        if (loaded.database == nullptr) {
+            return fail(QStringLiteral("the template could not be read"));
+        }
+        Database& db = *loaded.database;
+
+        // The title block's fields, by the tags offices use. A tag that
+        // says SHEET gets the number; one that says TITLE gets the title,
+        // split over LINE1/LINE2/... when the block has several; PROJECT
+        // or JOB gets the project's name. Every other field is left as the
+        // template has it.
+        const QStringList titleWords = QString::fromStdString(sheet.title).split(
+            QLatin1Char(' '), Qt::SkipEmptyParts);
+        for (const Handle handle : db.objectHandles()) {
+            auto* attribute = db.get<AttributeEntity>(handle);
+            if (attribute == nullptr || attribute->erased) {
+                continue;
+            }
+            const QString tag = QString::fromStdString(attribute->tag).toUpper();
+            if (tag.contains(QStringLiteral("TITLE"))) {
+                // "SHEETTITLE-LINE2(20LETTERS)": the line's number, if any.
+                int line = 1;
+                int lines = 1;
+                const int at = tag.indexOf(QStringLiteral("LINE"));
+                if (at >= 0) {
+                    line = std::max(1, tag.mid(at + 4, 1).toInt());
+                    lines = 3;
+                }
+                if (lines == 1) {
+                    attribute->setValue(sheet.title);
+                } else {
+                    // Spread the words across the lines, filling in order.
+                    const int words = static_cast<int>(titleWords.size());
+                    const int perLine = std::max(1, (words + lines - 1) / lines);
+                    const QStringList mine = titleWords.mid((line - 1) * perLine, perLine);
+                    attribute->setValue(mine.join(QLatin1Char(' ')).toStdString());
+                }
+            } else if (tag.contains(QStringLiteral("SHEET")) || tag == QStringLiteral("DWGNO") ||
+                       tag == QStringLiteral("NUMBER") || tag == QStringLiteral("SHT")) {
+                attribute->setValue(sheet.number);
+            } else if (tag.contains(QStringLiteral("PROJECT")) || tag.contains(QStringLiteral("JOB"))) {
+                if (!project_.name.empty()) {
+                    attribute->setValue(project_.name);
+                }
+            }
+        }
+
+        io::DxfWriter writer;
+        const std::string text = writer.write(db);
+        const std::filesystem::path path{target.toStdWString()};
+        if (target.endsWith(QStringLiteral(".dwg"), Qt::CaseInsensitive)) {
+            if (translator_ == nullptr || !translator_->canWriteDwg()) {
+                return fail(QStringLiteral("no DWG translator is available; use a DXF template"));
+            }
+            translator_->writeDwg(text, path);
+        } else {
+            QFile file{target};
+            if (!file.open(QIODevice::WriteOnly)) {
+                return fail(QStringLiteral("cannot create %1").arg(target));
+            }
+            file.write(text.data(), static_cast<qint64>(text.size()));
+        }
+    } catch (const std::exception& problem) {
+        return fail(QString::fromUtf8(problem.what()));
+    }
+
+    // The list learns the file name it now has.
+    if (ProjectSheet* listed = project_.findSheet(sheet.number); listed != nullptr && listed->file.empty()) {
+        listed->file = stored.toStdString();
+        save();
+    }
+    return target;
+}
+
+int ProjectIndex::makeMissingSheetFiles(QStringList* made, QStringList* problems) {
+    int count = 0;
+    // Over a copy: making a file may write the list.
+    const std::vector<ProjectSheet> sheets = project_.sheets;
+    for (const ProjectSheet& sheet : sheets) {
+        const QString stored = QString::fromStdString(sheet.file);
+        if (!stored.isEmpty() && QFileInfo::exists(absolutePath(stored))) {
+            continue;
+        }
+        QString error;
+        const QString path = makeSheetFile(sheet, &error);
+        if (path.isEmpty()) {
+            if (problems != nullptr) {
+                *problems << error;
+            }
+            continue;
+        }
+        ++count;
+        if (made != nullptr) {
+            *made << path;
+        }
+    }
+    return count;
 }
 
 std::optional<std::string> ProjectIndex::answer(const AgentQuery& query) {

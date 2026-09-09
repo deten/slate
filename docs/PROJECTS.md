@@ -26,6 +26,16 @@ open drawing is in.
 - **Notes for the assistant.** What the drawings cannot say: conventions,
   client rules, what is out of scope.
 
+**Make missing sheet files** makes a drawing for every listed sheet that
+has none yet, from the sheet template: the template copied, its title
+block filled with the sheet's number and title and the project's name,
+written under the sheet's number with the template's extension. The list
+learns the file names. A tag that says SHEET takes the number, one that
+says TITLE takes the title, split over LINE1, LINE2 and so on when the
+block has several, and PROJECT or JOB takes the project's name. Other
+fields stay as the template has them. Sheets whose files exist are left
+alone. In a scripted run, `--project <file> --make-sheets` does the same.
+
 **Save** writes `project.slate` in the folder. It is plain text, made and
 kept by Slate, and can be edited by hand:
 

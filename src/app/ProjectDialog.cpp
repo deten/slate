@@ -94,11 +94,16 @@ ProjectDialog::ProjectDialog(ProjectIndex& index, const QString& folder, QWidget
     auto* scan = new QPushButton{tr("List drawings in folder"), this};
     scan->setToolTip(tr("Add every drawing in the folder that is not listed yet, reading its "
                         "number and title from its title block."));
+    auto* makeFiles = new QPushButton{tr("Make missing sheet files"), this};
+    makeFiles->setToolTip(tr("Make a drawing for every listed sheet that has none yet, from the "
+                             "sheet template, with its title block filled in. Saves first."));
     sheetButtons->addWidget(addSheet);
     sheetButtons->addWidget(removeSheet);
     sheetButtons->addStretch();
+    sheetButtons->addWidget(makeFiles);
     sheetButtons->addWidget(scan);
     layout->addLayout(sheetButtons);
+    connect(makeFiles, &QPushButton::clicked, this, &ProjectDialog::onMakeFiles);
 
     layout->addWidget(new QLabel{tr("Backgrounds"), this});
     backgrounds_ = new QTableWidget{0, 2, this};
@@ -302,32 +307,55 @@ void ProjectDialog::onScan() {
     status_->setText(report);
 }
 
-void ProjectDialog::onSave() {
+bool ProjectDialog::store() {
     Project project = this->project();
     if (project.name.empty()) {
         QMessageBox::warning(this, tr("Project"), tr("Give the project a name."));
-        return;
+        return false;
     }
     if (!index_.isOpen() || index_.path() != path_) {
         std::string error;
         if (!saveProject(project, std::filesystem::path{path_.toStdWString()}, &error)) {
             QMessageBox::warning(this, tr("Project"), QString::fromStdString(error));
-            return;
+            return false;
         }
         QString problem;
         if (!index_.open(path_, &problem)) {
             QMessageBox::warning(this, tr("Project"), problem);
-            return;
+            return false;
         }
     } else {
         index_.project() = std::move(project);
         QString problem;
         if (!index_.save(&problem)) {
             QMessageBox::warning(this, tr("Project"), problem);
-            return;
+            return false;
         }
     }
-    accept();
+    return true;
+}
+
+void ProjectDialog::onMakeFiles() {
+    // The list as it stands is what gets made, so it is saved first; the
+    // file names the sheets acquire are shown back in the table.
+    if (!store()) {
+        return;
+    }
+    QStringList made;
+    QStringList problems;
+    const int count = index_.makeMissingSheetFiles(&made, &problems);
+    fill(index_.project());
+    QString report = tr("%n sheet file(s) made.", "", count);
+    if (!problems.isEmpty()) {
+        report += QLatin1Char(' ') + problems.join(QStringLiteral("; "));
+    }
+    status_->setText(report);
+}
+
+void ProjectDialog::onSave() {
+    if (store()) {
+        accept();
+    }
 }
 
 }  // namespace cad::app

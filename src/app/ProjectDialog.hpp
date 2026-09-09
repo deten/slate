@@ -43,9 +43,12 @@ private Q_SLOTS:
     void onAddBackground();
     void onRemoveBackground();
     void onScan();
+    void onMakeFiles();
     void onSave();
 
 private:
+    /// Write the form to the project file, opening it in the index.
+    bool store();
     void fill(const Project& project);
     void addSheetRow(const ProjectSheet& sheet);
     void addBackgroundRow(const ProjectBackground& background);

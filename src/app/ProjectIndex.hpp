@@ -72,6 +72,16 @@ public:
     void refresh(const std::function<void(const QString&)>& progress = {},
                  QStringList* problems = nullptr);
 
+    /// Make the sheet's file from the project's template: the template
+    /// copied, its title block filled with the sheet's number and title and
+    /// the project's name, written under the sheet's file name. The file
+    /// must not exist yet. Returns the path written, or empty with `error`.
+    [[nodiscard]] QString makeSheetFile(const ProjectSheet& sheet, QString* error);
+
+    /// Make the file of every listed sheet that has none yet. Returns how
+    /// many were made; the trouble with the rest goes to `problems`.
+    int makeMissingSheetFiles(QStringList* made, QStringList* problems);
+
 private:
     struct Entry {
         QString key;

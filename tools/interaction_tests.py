@@ -860,6 +860,64 @@ def test_a_project_beside_the_drawing_is_told_to_the_assistant(work: Path) -> No
     expect((folder / "project.slate.index").exists(), "the sheet readings were not cached")
 
 
+def minimal_title_block_template(path: Path) -> None:
+    """A template drawing: one block TB with SHEET and TITLE attributes,
+    placed once, written in the smallest DXF the reader accepts."""
+    def group(code: int, value) -> str:
+        return f"{code}\n{value}\n"
+
+    text = group(0, "SECTION") + group(2, "BLOCKS")
+    text += group(0, "BLOCK") + group(8, "0") + group(2, "TB") + group(70, 2)
+    text += group(10, 0) + group(20, 0) + group(30, 0) + group(3, "TB")
+    for tag, y in (("SHEET", 0), ("TITLE", 20)):
+        text += group(0, "ATTDEF") + group(8, "0") + group(10, 0) + group(20, y) + group(30, 0)
+        text += group(40, 10) + group(1, "") + group(3, tag) + group(2, tag) + group(70, 0)
+    text += group(0, "ENDBLK") + group(8, "0")
+    text += group(0, "ENDSEC")
+    text += group(0, "SECTION") + group(2, "ENTITIES")
+    text += group(0, "INSERT") + group(8, "0") + group(66, 1) + group(2, "TB")
+    text += group(10, 100) + group(20, 100) + group(30, 0)
+    for tag, y in (("SHEET", 100), ("TITLE", 120)):
+        text += group(0, "ATTRIB") + group(8, "0") + group(10, 100) + group(20, y) + group(30, 0)
+        text += group(40, 10) + group(1, "X-0") + group(2, tag) + group(70, 0)
+    text += group(0, "SEQEND") + group(8, "0")
+    text += group(0, "ENDSEC") + group(0, "EOF")
+    path.write_text(text, encoding="utf-8")
+
+
+def test_sheet_files_are_made_from_the_template_with_the_title_block_filled(work: Path) -> None:
+    """Two listed sheets with no files yet are made from the template, each
+    with its number and title in the title block, and the list learns the
+    file names. A sheet whose file exists is left alone."""
+    folder = work / "newset"
+    folder.mkdir(exist_ok=True)
+    minimal_title_block_template(folder / "template.dxf")
+    (folder / "project.slate").write_text(
+        "project: New Set\n"
+        "discipline: M\n"
+        "template: template.dxf\n"
+        "sheet: M1.1 | Mechanical Plan Level 1 |  |  |  | draft\n"
+        "sheet: M2.1 | Duct Plan |  |  |  |\n", encoding="utf-8")
+    log, _ = run(work, "make-sheets", [
+        "--project", str(folder / "project.slate"), "--make-sheets",
+    ], save=False)
+    expect("2 sheet file(s) made." in log, f"the sheets were not made:\n{log}")
+    made = folder / "M2.1.dxf"
+    expect(made.exists(), f"M2.1.dxf was not written:\n{log}")
+    values = {r.get("2"): r.get("1") for r in records(made, "ATTRIB")}
+    expect(values.get("SHEET") == "M2.1", f"the sheet number was not filled: {values}")
+    expect(values.get("TITLE") == "Duct Plan", f"the title was not filled: {values}")
+    listing = (folder / "project.slate").read_text(encoding="utf-8")
+    expect("M1.1 | Mechanical Plan Level 1 | M1.1.dxf" in listing,
+           f"the list did not learn the file name:\n{listing}")
+
+    # Run again: nothing to make, nothing overwritten.
+    log, _ = run(work, "make-sheets-again", [
+        "--project", str(folder / "project.slate"), "--make-sheets",
+    ], save=False)
+    expect("0 sheet file(s) made." in log, f"existing sheets were remade:\n{log}")
+
+
 def test_the_assistant_learns_house_standards_from_a_reference_folder(work: Path) -> None:
     """A folder of the office's drawings teaches the layers it uses.
 
@@ -1500,6 +1558,7 @@ SCENARIOS = [
     test_describe_reads_a_labelled_room,
     test_the_assistant_can_ask_for_facts_and_ask_the_user,
     test_a_project_beside_the_drawing_is_told_to_the_assistant,
+    test_sheet_files_are_made_from_the_template_with_the_title_block_filled,
     test_two_hot_grips_on_one_object_stretch_together,
     test_two_hot_grips_move_the_object_once,
     test_two_midpoint_grips_each_add_a_corner,
