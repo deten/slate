@@ -60,6 +60,7 @@ public:
             }
             // Last, because it walks dictionaries that must all be present.
             linkFieldsToTheirObjects();
+            readClipBoundaries();
             // And then the table cells, whose values are composed rather than
             // stored: a schedule read without this is an empty grid.
             refreshTableCells(*db_);
@@ -1495,6 +1496,86 @@ private:
     /// chain is walked once here so that everything afterwards — rendering,
     /// selection, the properties palette — can ask an object whether it is a
     /// field for the price of a handle comparison.
+    /// A clipped block reference keeps its boundary as a SPATIAL_FILTER in
+    /// its extension dictionary, under ACAD_FILTER / SPATIAL. Read into the
+    /// reference's own clip so it draws clipped and can be edited; the
+    /// filter object itself is preserved and written back from the fields.
+    void readClipBoundaries() {
+        for (const Handle handle : db_->objectHandles()) {
+            auto* insert = db_->get<InsertEntity>(handle);
+            if (insert == nullptr || insert->extensionDictionaryHandle.isNull()) {
+                continue;
+            }
+            const DbObject* xdictionary = db_->getObject(insert->extensionDictionaryHandle);
+            if (xdictionary == nullptr) {
+                continue;
+            }
+            const Handle filterDictionary = dictionaryEntry(*xdictionary, "ACAD_FILTER");
+            const DbObject* filters =
+                filterDictionary.isNull() ? nullptr : db_->getObject(filterDictionary);
+            if (filters == nullptr) {
+                continue;
+            }
+            const Handle spatial = dictionaryEntry(*filters, "SPATIAL");
+            const auto* filter = spatial.isNull() ? nullptr : db_->get<RawObject>(spatial);
+            if (filter == nullptr || filter->dxfType != "SPATIAL_FILTER" ||
+                filter->preserved == nullptr) {
+                continue;
+            }
+            // 70 count, then 10/20 points in the filter's own plane; 71 on
+            // or off; two 4x3 matrices of twelve 40s each: the inverse of the
+            // reference's transform, then the boundary's transform into
+            // block coordinates. The boundary points are given in the
+            // filter's coordinate system and the second matrix places them.
+            std::vector<double> xs;
+            std::vector<double> ys;
+            std::vector<double> matrix;
+            int enabled = 1;
+            for (const UnknownGroup& group : filter->preserved->unknownCodes) {
+                const auto* number = std::get_if<double>(&group.value);
+                const auto* integer = std::get_if<std::int64_t>(&group.value);
+                const double value = number != nullptr ? *number
+                                     : integer != nullptr ? static_cast<double>(*integer)
+                                                          : 0.0;
+                if (group.code == 10) {
+                    xs.push_back(value);
+                } else if (group.code == 20) {
+                    ys.push_back(value);
+                } else if (group.code == 71) {
+                    enabled = static_cast<int>(value);
+                } else if (group.code == 40) {
+                    matrix.push_back(value);
+                }
+            }
+            if (xs.size() < 2 || xs.size() != ys.size()) {
+                continue;
+            }
+            // The second matrix, when both are present; the first alone
+            // when the file carries only one.
+            const std::size_t offset = matrix.size() >= 24 ? 12 : 0;
+            const bool hasMatrix = matrix.size() >= offset + 12;
+            std::vector<Vec3> boundary;
+            for (std::size_t i = 0; i < xs.size(); ++i) {
+                Vec3 p{xs[i], ys[i], 0.0};
+                if (hasMatrix) {
+                    const double* m = matrix.data() + offset;
+                    p = Vec3{m[0] * p.x + m[1] * p.y + m[2] * p.z + m[3],
+                             m[4] * p.x + m[5] * p.y + m[6] * p.z + m[7],
+                             m[8] * p.x + m[9] * p.y + m[10] * p.z + m[11]};
+                }
+                boundary.push_back(p);
+            }
+            // Two points are a rectangle's corners.
+            if (boundary.size() == 2) {
+                const Vec3 a = boundary[0];
+                const Vec3 b = boundary[1];
+                boundary = {a, Vec3{b.x, a.y, 0.0}, b, Vec3{a.x, b.y, 0.0}};
+            }
+            insert->clipBoundary = std::move(boundary);
+            insert->clipEnabled = enabled != 0;
+        }
+    }
+
     void linkFieldsToTheirObjects() {
         const auto link = [this](DbObject& object) {
             if (object.extensionDictionaryHandle.isNull()) {

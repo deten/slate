@@ -13,6 +13,8 @@ and where to put it.
 | `IMAGEATTACH` (IAT) | Place a picture file. Asks for the file, then the insertion point, scale and rotation. One pixel is one drawing unit at scale 1. |
 | `REFERENCES` (XREF, IMAGE) | The reference manager: every picture and PDF the drawing depends on, whether it was found, Locate to repair a path, Reload to read the files again, and Detach to remove one with every place it is shown. Detach undoes as one step. |
 | `DRAWORDER` (DR) | Which objects draw over which: to the front, to the back, or just above or under another object. A PDF page or a picture sent to the back stops hiding the lines drawn over it. |
+| `XCLIP` (XC) | Show only part of a block or external reference. Select it, then New for a boundary, Rectangular by two corners or Polygonal by points until Enter; OFF shows the whole again keeping the boundary, ON brings it back, Delete drops it. The boundary moves with the reference. |
+| `IMAGECLIP` (ICL) | The same for a picture: New, ON, OFF, Delete. The boundary is kept in the picture's own pixels, so it stays put when the picture is moved or scaled. |
 
 ## What is drawn
 
@@ -29,8 +31,12 @@ definition naming the page for a PDF, each listed in the drawing's named
 object dictionary, with the classes those objects need declared. A file saved
 here opens elsewhere with its references intact.
 
+A clipped reference keeps its boundary as a spatial filter in the
+reference's extension dictionary, which is how every other reader expects
+it, so a clip made here is honoured elsewhere and one made elsewhere is
+drawn here. A clipped picture keeps its boundary in the image record.
+
 ## Not yet
 
 External drawings in the manager, with detach, reload and unload for them.
-Clipping a reference or a picture drawn here. Attaching DWF and DGN
-underlays.
+Attaching DWF and DGN underlays.

@@ -56,6 +56,9 @@ namespace cad {
 /// Drawing in the style of an example: LIKE.
 [[nodiscard]] std::vector<CommandDefinition> likeCommands();
 
+/// Clipping references and pictures: XCLIP, IMAGECLIP.
+[[nodiscard]] std::vector<CommandDefinition> clipCommands();
+
 /// Build a registry populated with the built-in commands.
 ///
 /// Deliberately a function returning a fresh registry rather than a shared

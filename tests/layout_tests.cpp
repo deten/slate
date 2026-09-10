@@ -669,3 +669,45 @@ TEST_SUITE("ObjectsSectionPreservation") {
         CHECK(first.write(*read.database) == second.write(*read.database));
     }
 }
+
+TEST_SUITE("Plotting") {
+
+TEST_CASE("a viewport on a non-plotting layer shows on screen and not on paper") {
+    SheetHarness harness;
+    Layer& frames = harness.db->ensureLayer("VPORTS");
+    frames.isPlottable = false;
+    harness.window->layerHandle = frames.handle;
+    // Something in the model to see through the window, on a layer that plots.
+    harness.db->addToModelSpace(std::make_unique<LineEntity>(Vec3{0, 0, 0}, Vec3{100, 100, 0}));
+
+    render::SceneBuilder builder{*harness.db, harness.index};
+    builder.reindex(harness.db->modelSpace());
+    const auto frameItems = [&](const render::Scene& scene) {
+        std::size_t count = 0;
+        for (const render::DrawItem& item : scene.items) {
+            if (item.handle == harness.window->handle) {
+                ++count;
+            }
+        }
+        return count;
+    };
+    const render::Scene screen = builder.buildLayout(*harness.sheet, sheetView());
+    CHECK(frameItems(screen) >= 1);
+
+    render::SceneOptions plot;
+    plot.forPlot = true;
+    const render::Scene paper = builder.buildLayout(*harness.sheet, sheetView(), plot);
+    CHECK(frameItems(paper) == 0);
+    // The model line seen through the window is still there.
+    CHECK(paper.items.size() >= 1);
+
+    // DEFPOINTS never plots, whatever its flag says.
+    Layer& defpoints = harness.db->ensureLayer("Defpoints");
+    defpoints.isPlottable = true;
+    harness.window->layerHandle = defpoints.handle;
+    const render::Scene again = builder.buildLayout(*harness.sheet, sheetView(), plot);
+    CHECK(frameItems(again) == 0);
+    CHECK(frameItems(builder.buildLayout(*harness.sheet, sheetView())) >= 1);
+}
+
+}  // TEST_SUITE

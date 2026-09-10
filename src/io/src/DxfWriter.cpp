@@ -861,11 +861,23 @@ void DxfBuilder::identity(const DbObject& object) {
 
 void DxfBuilder::identity(const DbObject& object, int handleCode) {
     pair(handleCode, object.handle);
-    if (object.preserved == nullptr) {
-        return;
+    bool wroteDictionary = false;
+    if (object.preserved != nullptr) {
+        for (const UnknownGroup& group : object.preserved->applicationGroups) {
+            std::visit([&](const auto& value) { pair(group.code, value); }, group.value);
+            if (const auto* text = std::get_if<std::string>(&group.value);
+                group.code == 102 && text != nullptr && text->starts_with("{ACAD_XDICTIONARY")) {
+                wroteDictionary = true;
+            }
+        }
     }
-    for (const UnknownGroup& group : object.preserved->applicationGroups) {
-        std::visit([&](const auto& value) { pair(group.code, value); }, group.value);
+    // An extension dictionary given here, not read from a file -- a clip
+    // put on a reference -- has no preserved group to be written from, so
+    // the group is made. One read from a file is written back as it was.
+    if (!wroteDictionary && !object.extensionDictionaryHandle.isNull()) {
+        pair(102, "{ACAD_XDICTIONARY");
+        pair(360, object.extensionDictionaryHandle);
+        pair(102, "}");
     }
 }
 

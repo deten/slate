@@ -95,6 +95,7 @@ bool paintPlot(QPainter& painter, Document& document, const QRectF& pageRect,
     render::SceneOptions options;
     // A plot is not interactive, so the level-of-detail cull that keeps the
     // canvas responsive would only throw away detail the paper can resolve.
+    options.forPlot = true;
     options.minPixelSize = 0.0;
     options.maxItems = std::numeric_limits<std::size_t>::max();
     // Content this application cannot draw is left blank rather than outlined.

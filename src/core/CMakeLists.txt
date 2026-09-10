@@ -89,6 +89,8 @@ add_library(cad_core STATIC
     src/command/SystemCommands.cpp
     src/command/LikeCommands.cpp
     src/db/ConstructionLineEntity.cpp
+    src/db/ClipFilter.cpp
+    src/command/ClipCommands.cpp
     src/command/LayerCommands.cpp
     src/command/AnnotationCommands.cpp
 )

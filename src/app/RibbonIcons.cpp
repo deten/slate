@@ -99,6 +99,15 @@ void letterA(const Ink& ink, qreal x, qreal y, qreal h) {
              i.node(15, 15);
              i.node(21, 5);
          }},
+        // A multiline: two parallel lines turning a mitred corner, drawn
+        // as one; both accented because both are the wall.
+        {"MLINE",
+         [](const Ink& i) {
+             i.line(3, 15, 13, 15);
+             i.newLine(13, 15, 13, 4);
+             i.newLine(3, 20, 18, 20);
+             i.newLine(18, 20, 18, 4);
+         }},
         // A construction line: runs off both edges, the point it passes
         // through accented because that is what is picked.
         {"XLINE",
@@ -753,6 +762,40 @@ void letterA(const Ink& ink, qreal x, qreal y, qreal h) {
              i.painter->setPen(i.accent);
              i.painter->setBrush(Qt::NoBrush);
              i.painter->drawRect(QRectF{8.5, 8.5, 12, 12});
+         }},
+        // A block written out: the block's box with an arrow leaving it for
+        // a file, the arrow accented because the writing is the point.
+        {"WBLOCK",
+         [](const Ink& i) {
+             i.ghost(3, 4, 13, 4);
+             i.ghost(3, 4, 3, 14);
+             i.ghost(13, 4, 13, 14);
+             i.ghost(3, 14, 13, 14);
+             i.line(10, 18, 21, 18);
+             i.newLine(17, 14, 21, 18);
+             i.newLine(17, 22, 21, 18);
+         }},
+        // A clipped reference: a block's ghost with the kept part outlined,
+        // the boundary accented because it is what the command draws.
+        {"XCLIP",
+         [](const Ink& i) {
+             i.ghost(3, 3, 21, 3);
+             i.ghost(3, 3, 3, 21);
+             i.ghost(21, 3, 21, 21);
+             i.ghost(3, 21, 21, 21);
+             i.rect(8, 8, 10, 10);
+         }},
+        // A clipped picture: the frame's ghost with the kept corner
+        // outlined.
+        {"IMAGECLIP",
+         [](const Ink& i) {
+             i.ghost(3, 3, 21, 3);
+             i.ghost(3, 3, 3, 21);
+             i.ghost(21, 3, 21, 21);
+             i.ghost(3, 21, 21, 21);
+             i.ghost(6, 17, 11, 11);
+             i.ghost(11, 11, 15, 15);
+             i.rect(12, 4, 8, 8);
          }},
         // A sheet list: numbered rows down a page, the numbers accented
         // because the index is the list of them.

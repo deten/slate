@@ -3818,6 +3818,34 @@ AttachHooks MainWindow::attachHooks() {
     hooks.xref = [this](const std::string& path, bool overlay, Handle* block) {
         return attachExternalReference(path, overlay, block);
     };
+    hooks.writeDrawing = [this](const Database& db, const std::string& path) -> std::string {
+        try {
+            io::DxfWriter writer;
+            const std::string text = writer.write(db);
+            const std::filesystem::path target{QString::fromStdString(path).toStdWString()};
+            if (QString::fromStdString(path).endsWith(QStringLiteral(".dwg"), Qt::CaseInsensitive)) {
+                if (translator_ == nullptr || !translator_->canWriteDwg()) {
+                    return "No DWG translator is available. Write a DXF instead.";
+                }
+                translator_->writeDwg(text, target);
+            } else {
+                std::ofstream stream{target, std::ios::binary};
+                if (!stream) {
+                    return "Cannot create " + path + ".";
+                }
+                stream.write(text.data(), static_cast<std::streamsize>(text.size()));
+                if (!stream) {
+                    return "Failed while writing " + path + ".";
+                }
+            }
+            for (const io::DxfDiagnostic& diagnostic : writer.diagnostics()) {
+                log(tr("  warning: %1").arg(QString::fromStdString(diagnostic.message)));
+            }
+            return {};
+        } catch (const std::exception& error) {
+            return std::string{error.what()};
+        }
+    };
     hooks.sheetList = [this] {
         std::vector<std::pair<std::string, std::string>> sheets;
         if (project_ != nullptr && project_->isOpen()) {

@@ -8,6 +8,9 @@
 #include "cad/db/CurveEntities.hpp"
 #include "cad/db/DimensionEntity.hpp"
 #include "cad/db/HatchEntity.hpp"
+#include <cctype>
+#include <functional>
+
 #include "cad/db/InsertEntity.hpp"
 #include "cad/db/SolidEntity.hpp"
 #include "cad/db/Linetype.hpp"
@@ -724,6 +727,21 @@ void SceneBuilder::appendEntity(const Entity& entity, const Mat4& transform,
         ++scene.culled;
         return;
     }
+    // On paper, a layer marked not to plot stays off it, and so does
+    // DEFPOINTS, the layer other CAD software never plots and drafters use
+    // for viewport frames for that reason. On screen both are drawn.
+    if (options.forPlot) {
+        if (const auto* layer = db_.get<Layer>(entity.layerHandle); layer != nullptr) {
+            std::string name = layer->name;
+            for (char& c : name) {
+                c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+            }
+            if (!layer->isPlottable || name == "DEFPOINTS") {
+                ++scene.culled;
+                return;
+            }
+        }
+    }
 
     DrawItem item;
     item.handle = entity.handle;
@@ -1023,6 +1041,31 @@ void SceneBuilder::expandInsert(const Entity& insertEntity, const Mat4& parentTr
 
     for (const Mat4& cell : insert->cellTransforms()) {
         const Mat4 transform = parentTransform.multiply(cell);
+        // Everything this cell produces is clipped to the reference's
+        // boundary, carried in world coordinates. Stamped afterwards, as a
+        // viewport's frame is, so every item of every child is covered.
+        const std::size_t itemsBefore = scene.items.size();
+        const auto stampClip = [&] {
+            if (!insert->isClipped()) {
+                return;
+            }
+            std::vector<Vec3> polygon;
+            polygon.reserve(insert->clipBoundary.size());
+            for (const Vec3& corner : insert->clipBoundary) {
+                polygon.push_back(transform.transformPoint(corner));
+            }
+            for (std::size_t i = itemsBefore; i < scene.items.size(); ++i) {
+                if (scene.items[i].clipPolygon.empty()) {
+                    scene.items[i].clipPolygon = polygon;
+                }
+            }
+        };
+        struct OnExit {
+            const std::function<void()>& run;
+            ~OnExit() { run(); }
+        };
+        const std::function<void()> stamp = stampClip;
+        const OnExit stampOnExit{stamp};
 
         // Cull the whole cell before touching its contents.
         const Box3 cellBounds = insert->blockExtents().transformed(transform);

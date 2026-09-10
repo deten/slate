@@ -202,6 +202,10 @@ if ($Package) {
     # the benchmark and inspection tools -- are development scaffolding, and
     # shipping them invites somebody to run one and file the result as a bug.
     Copy-Item (Join-Path $bin 'Slate.exe') -Destination $stage
+    # The licence and the third-party notices travel with every copy; the
+    # licence's terms require it, and so does Qt's.
+    Copy-Item (Join-Path $root 'LICENSE') -Destination $stage
+    Copy-Item (Join-Path $root 'NOTICE.md') -Destination $stage
 
     # Every DLL beside it. windeployqt put the Qt runtime here; picking the
     # ones to copy by name would go stale the first time a Qt module is added.

@@ -11,6 +11,7 @@ reference.
 |---|---|
 | `ATTDEF` (ATT) | Makes an attribute definition in the current space: modes, tag, prompt, default, then where the text goes, its height and angle. BLOCK sweeps it into a definition like any other entity. |
 | `INSERT` | When the block has attribute definitions, asks for each value (the definition's prompt, with its default). Constant attributes are never asked; preset ones take their default. |
+| `WBLOCK` (W) | Write part of the drawing to its own file, DWG or DXF by the name given. A Block by name, the Entire drawing, or Objects you select with a base point that becomes the file's origin. Only the layers, linetypes, styles and blocks the objects need go with them. Pick the objects first and the command writes them from the origin. |
 | `ATTEDIT` (ATE, EATTEDIT) | Picks a block reference, or takes the one selected, and asks a new value for each of its attributes, current value as the default. |
 | `ATTSYNC` | Brings every reference of a block into line with the block's attribute definitions. Values already typed are kept by tag and moved to where their definitions now sit, a definition added since gets its default, and one removed since takes its attribute with it. Give the block's name, or pick one of its references. |
 

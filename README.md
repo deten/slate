@@ -10,6 +10,14 @@ Download the zip from the latest release, unzip it, and run `Slate.exe`.
 
 DWG files need the free ODA File Converter. Download it from https://www.opendesign.com/guestfiles/oda_file_converter, install it, then copy its folder to `converters\ODAFileConverter` next to `Slate.exe`. DXF files work without it.
 
+## License
+
+Slate is free software under the GNU General Public License, version 3 or
+later: you may use, copy, change and share it, and anyone who distributes
+it or a program built from it must pass on the source under the same
+terms. See `LICENSE` for the terms and `NOTICE.md` for the software Slate
+is built with.
+
 ## Building it
 
 Run `build.ps1` in PowerShell. It needs Visual Studio 2022, CMake, Ninja and Qt 6. See `docs/BUILDING.md` for details.

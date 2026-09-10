@@ -84,6 +84,8 @@ DbObjectPtr InsertEntity::clone() const {
     copy->position = position;
     copy->scale = scale;
     copy->rotation = rotation;
+    copy->clipBoundary = clipBoundary;
+    copy->clipEnabled = clipEnabled;
     copy->attributeHandles = attributeHandles;
     copy->columnCount = columnCount;
     copy->rowCount = rowCount;
@@ -103,6 +105,8 @@ void InsertEntity::restoreFrom(const DbObject& snapshot) {
     position = source->position;
     scale = source->scale;
     rotation = source->rotation;
+    clipBoundary = source->clipBoundary;
+    clipEnabled = source->clipEnabled;
     attributeHandles = source->attributeHandles;
     columnCount = source->columnCount;
     rowCount = source->rowCount;

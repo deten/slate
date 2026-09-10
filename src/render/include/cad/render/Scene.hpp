@@ -129,6 +129,11 @@ struct DrawItem {
     /// GPU, a clip region in QPainter. Cutting the geometry ourselves would
     /// throw away that advantage and produce a different result per backend.
     std::optional<Box3> clip;
+
+    /// Polygon this item must be clipped to, in world coordinates; empty
+    /// for none. A clipped block reference's contents carry it, so a
+    /// background shows only the part the drafter kept.
+    std::vector<Vec3> clipPolygon;
 };
 
 /// A raster image to draw, in world coordinates.
@@ -222,6 +227,11 @@ struct Scene {
 };
 
 struct SceneOptions {
+    /// Building for paper rather than the screen: layers marked not to
+    /// plot are left out, and so is the DEFPOINTS layer, which is where
+    /// viewport frames go to be seen while drafting and never printed.
+    bool forPlot = false;
+
     /// Skip entities whose whole extent is smaller than this many pixels.
     double minPixelSize = 1.0;
     /// Maximum block nesting depth to expand.

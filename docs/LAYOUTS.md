@@ -59,7 +59,15 @@ a millimetre drawing puts a metre in a centimetre, or Fit to page. A sheet
 plots at its own size, with its viewports at the scales they were given. Plot
 in black is on by default. Lineweights plot at their width.
 
+A viewport's frame is drawn on screen so it can be picked and moved, and
+it plots like any other object unless its layer does not. Put viewports on
+a layer with Plot switched off in the layer panel, or on a layer named
+DEFPOINTS, which never plots, and the page shows the model through the
+window with no box around it. The same holds for anything else on such a
+layer: construction lines, notes to yourself, a sketch behind the drawing.
+
 ## Not yet
 
-Locking a viewport's scale and per-viewport layer freezing are read and
-drawn from files but cannot yet be changed here.
+Tiled viewports in model space (VPORTS), and viewports clipped to a
+polygon rather than a rectangle: both are read and drawn from files, but
+cannot yet be made here.

@@ -42,6 +42,10 @@ struct AttachHooks {
     /// The project's sheets, number and title in order, for the index
     /// sheet. Empty when no project is open.
     std::function<std::vector<std::pair<std::string, std::string>>()> sheetList;
+    /// Write a drawing to a file, DXF or DWG by its extension. Returns the
+    /// problem, or an empty string. Given by the window because DWG goes
+    /// through the translator it holds.
+    std::function<std::string(const Database& db, const std::string& path)> writeDrawing;
     /// How many pages a PDF has.
     std::function<std::string(const std::string& path, int* pages)> pdfPages;
     /// A page's size in points, pages counted from one.

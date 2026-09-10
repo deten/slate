@@ -1097,6 +1097,34 @@ def test_the_assistant_draws_like_the_drawing_already_does(work: Path) -> None:
     expect(tags == ["12x10", "24x12", "8x8"], f"the tags are wrong: {tags}")
 
 
+def test_wblock_writes_the_drawing_to_its_own_file(work: Path) -> None:
+    """The Entire form writes what is drawn to a new file that opens on
+    its own, with its layer along; the Block form writes a block's contents."""
+    out = work / "written.dxf"
+    log, _ = run(work, "wblock", [
+        "--run", "LAYER", "--run", "S-DETAIL", "--run", "3",
+        "--run", "LINE", "--run", "0,0", "--run", "300,0", "--run", "",
+        "--run", "CIRCLE", "--run", "150,0", "--run", "40",
+        "--run", "WBLOCK", "--run", str(out), "--run", "E",
+    ], save=False)
+    expect("Wrote 2 objects to" in log, f"the drawing was not written:\n{log}")
+    expect(out.exists(), "the file was not made")
+    expect(len(lines_in(out)) == 1 and len(records(out, "CIRCLE")) == 1,
+           "the written file does not hold the two objects")
+    layers = {r.get("2") for r in records(out, "LAYER")}
+    expect("S-DETAIL" in layers, f"the layer did not go with the objects: {layers}")
+
+    # A block by name, from the minimal template's title block.
+    minimal_title_block_template(work / "tb.dxf")
+    block_out = work / "tb-block.dxf"
+    log, _ = run(work, "wblock-block", [
+        "--open", str(work / "tb.dxf"),
+        "--run", "WBLOCK", "--run", str(block_out), "--run", "B", "--run", "TB",
+    ], save=False)
+    expect("Wrote 2 objects to" in log, f"the block was not written:\n{log}")
+    expect(len(records(block_out, "ATTDEF")) == 2, "the block's definitions were not written")
+
+
 def test_the_assistant_learns_house_standards_from_a_reference_folder(work: Path) -> None:
     """A folder of the office's drawings teaches the layers it uses.
 
@@ -1743,6 +1771,7 @@ SCENARIOS = [
     test_the_assistant_places_a_thermostat_from_zones_and_spots,
     test_the_assistant_runs_duct_with_the_duct_command,
     test_the_assistant_draws_like_the_drawing_already_does,
+    test_wblock_writes_the_drawing_to_its_own_file,
     test_two_hot_grips_on_one_object_stretch_together,
     test_two_hot_grips_move_the_object_once,
     test_two_midpoint_grips_each_add_a_corner,

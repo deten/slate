@@ -9,6 +9,8 @@
 
 #include "cad/db/BlockTableRecord.hpp"
 #include "cad/db/InsertEntity.hpp"
+#include "cad/db/TextEntities.hpp"
+#include "cad/db/Transfer.hpp"
 #include "cad/db/Layout.hpp"
 #include "cad/db/RasterImageEntity.hpp"
 #include "cad/db/UnderlayEntity.hpp"
@@ -1027,6 +1029,163 @@ private:
 
 }  // namespace
 
+/// WBLOCK: write part of the drawing to its own file.
+///
+/// A block by name, the whole drawing, or a selection with a base point,
+/// each as a drawing of its own with the layers, linetypes, styles and
+/// blocks it needs and nothing else. What an office does to hand a detail
+/// to another job, or to make a block file from something drawn once.
+class WriteBlockCommand final : public CommandInstance {
+public:
+    explicit WriteBlockCommand(AttachHooks hooks) : hooks_(std::move(hooks)) {}
+
+    StepResult start(CommandContext& context) override {
+        if (!hooks_.writeDrawing) {
+            return StepResult::failed("Writing files is not available here.");
+        }
+        preselected_ = context.initialSelection();
+        InputRequest request;
+        request.kind = InputRequest::Kind::Text;
+        request.prompt = "Enter the file to write (.dwg or .dxf)";
+        return StepResult::ask(request);
+    }
+
+    StepResult supply(const InputValue& input, CommandContext& context) override {
+        if (input.kind == InputValue::Kind::Cancel) {
+            return StepResult::cancelled();
+        }
+        switch (stage_) {
+            case Stage::Path: {
+                if (input.kind != InputValue::Kind::Text || input.text.empty()) {
+                    return StepResult::cancelled();
+                }
+                path_ = input.text;
+                if (!preselected_.empty()) {
+                    // Picked first: the selection is what is written, from
+                    // the origin.
+                    return writeSelection(preselected_, Vec3{}, context);
+                }
+                stage_ = Stage::Source;
+                InputRequest request;
+                request.kind = InputRequest::Kind::Keyword;
+                request.prompt = "Write [Block/Entire drawing/Objects] <Objects>";
+                request.keywords = {
+                    CommandKeyword{"Block", "B", "A block by name"},
+                    CommandKeyword{"Entire", "E", "The whole drawing"},
+                    CommandKeyword{"Objects", "O", "Objects you select, with a base point"},
+                };
+                request.defaultText = "Objects";
+                request.allowEmpty = true;
+                return StepResult::ask(request);
+            }
+            case Stage::Source: {
+                const std::string word = input.kind == InputValue::Kind::Empty ? "Objects" : input.text;
+                if (input.kind != InputValue::Kind::Empty && input.kind != InputValue::Kind::Keyword &&
+                    input.kind != InputValue::Kind::Text) {
+                    return StepResult::cancelled();
+                }
+                const char first = static_cast<char>(std::toupper(static_cast<unsigned char>(word.front())));
+                if (first == 'B') {
+                    stage_ = Stage::BlockName;
+                    InputRequest request;
+                    request.kind = InputRequest::Kind::Text;
+                    request.prompt = "Enter block name";
+                    return StepResult::ask(request);
+                }
+                if (first == 'E') {
+                    std::vector<Handle> everything;
+                    for (const Entity* entity : context.db().entitiesIn(context.db().modelSpace())) {
+                        if (entity != nullptr && !entity->erased) {
+                            everything.push_back(entity->handle);
+                        }
+                    }
+                    return writeSelection(everything, Vec3{}, context);
+                }
+                stage_ = Stage::BasePoint;
+                InputRequest request;
+                request.kind = InputRequest::Kind::Point;
+                request.prompt = "Specify base point";
+                request.defaultText = "0,0";
+                request.allowEmpty = true;
+                return StepResult::ask(request);
+            }
+            case Stage::BlockName: {
+                if (input.kind != InputValue::Kind::Text) {
+                    return StepResult::cancelled();
+                }
+                const BlockTableRecord* block = context.db().findBlock(input.text);
+                if (block == nullptr || block->isLayoutSpace()) {
+                    return StepResult::failed("There is no block called \"" + input.text + "\".");
+                }
+                std::vector<Handle> contents;
+                for (const Entity* entity : context.db().entitiesIn(*block)) {
+                    if (entity != nullptr && !entity->erased) {
+                        contents.push_back(entity->handle);
+                    }
+                }
+                return writeSelection(contents, Vec3{}, context);
+            }
+            case Stage::BasePoint: {
+                if (input.kind == InputValue::Kind::Point) {
+                    base_ = input.point;
+                } else if (input.kind != InputValue::Kind::Empty) {
+                    return StepResult::cancelled();
+                }
+                stage_ = Stage::Objects;
+                InputRequest request;
+                request.kind = InputRequest::Kind::Selection;
+                request.prompt = "Select objects to write";
+                return StepResult::ask(request);
+            }
+            case Stage::Objects:
+            default:
+                if (input.kind != InputValue::Kind::Selection || input.selection.empty()) {
+                    return StepResult::cancelled();
+                }
+                return writeSelection(input.selection, base_, context);
+        }
+    }
+
+private:
+    enum class Stage : std::uint8_t { Path, Source, BlockName, BasePoint, Objects };
+
+    StepResult writeSelection(const std::vector<Handle>& handles, const Vec3& base,
+                              CommandContext& context) {
+        if (handles.empty()) {
+            return StepResult::failed("Nothing to write.");
+        }
+        // The content as its own drawing, moved so the base point is its
+        // origin, which is where a block file's insertion point is.
+        ExtractedContent content = extractEntities(context.db(), handles);
+        if (content.isEmpty() || content.database == nullptr) {
+            return StepResult::failed("Nothing to write.");
+        }
+        if (!base.equals(Vec3{}, Tolerance{1e-12})) {
+            const Mat4 shift = Mat4::translation(base * -1.0);
+            Database& out = *content.database;
+            for (Entity* entity : out.entitiesIn(out.modelSpace())) {
+                if (entity != nullptr && !entity->erased && entity->canTransform()) {
+                    entity->transformBy(shift);
+                }
+            }
+        }
+        content.database->settings.insertionUnits = context.db().settings.insertionUnits;
+        const std::string problem = hooks_.writeDrawing(*content.database, path_);
+        if (!problem.empty()) {
+            return StepResult::failed(problem);
+        }
+        return StepResult::done("Wrote " + std::to_string(content.report.entities.size()) +
+                                " object" + (content.report.entities.size() == 1 ? "" : "s") +
+                                " to " + path_);
+    }
+
+    AttachHooks hooks_;
+    Stage stage_ = Stage::Path;
+    std::string path_;
+    Vec3 base_;
+    std::vector<Handle> preselected_;
+};
+
 /// SHEETINDEX: the project's sheet list as rows of text.
 ///
 /// The index on a set's first sheet, written from the list so it cannot
@@ -1111,6 +1270,19 @@ std::vector<CommandDefinition> viewCommands(CanvasWidget* canvas,
                                             AttachHooks hooks) {
     std::vector<CommandDefinition> commands;
     const AttachXrefHook attachXref = hooks.xref;
+
+    {
+        CommandDefinition definition;
+        definition.id = "cad.block.wblock";
+        definition.name = "WBLOCK";
+        definition.aliases = {"W"};
+        definition.title = "Write Block";
+        definition.description = "Write a block, the drawing or a selection to its own file";
+        definition.category = "Insert";
+        definition.supportsPickfirst = true;
+        definition.create = [hooks] { return std::make_unique<WriteBlockCommand>(hooks); };
+        commands.push_back(std::move(definition));
+    }
 
     {
         CommandDefinition definition;

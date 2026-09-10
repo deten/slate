@@ -291,13 +291,26 @@ void paintScene(QPainter& painter, const render::Scene& scene,
         // Viewport contents are clipped to their window. Done here rather than
         // in the scene because a clip region costs the backend almost nothing
         // and cutting the geometry would cost the scene a great deal.
-        const bool clipped = item.clip.has_value() && !item.clip->isEmpty();
+        const bool clippedToBox = item.clip.has_value() && !item.clip->isEmpty();
+        const bool clippedToPolygon = item.clipPolygon.size() >= 3;
+        const bool clipped = clippedToBox || clippedToPolygon;
         if (clipped) {
+            painter.save();
+        }
+        if (clippedToBox) {
             const render::ScreenPoint low = viewport.worldToScreen(item.clip->min);
             const render::ScreenPoint high = viewport.worldToScreen(item.clip->max);
-            painter.save();
             painter.setClipRect(QRectF{QPointF{std::min(low.x, high.x), std::min(low.y, high.y)},
                                        QPointF{std::max(low.x, high.x), std::max(low.y, high.y)}});
+        }
+        if (clippedToPolygon) {
+            // A clipped block reference's boundary. Intersected with the
+            // window's frame when both apply, which is a clipped background
+            // seen through a viewport.
+            QPainterPath boundary;
+            boundary.addPolygon(toPolygon(viewport, item.clipPolygon));
+            boundary.closeSubpath();
+            painter.setClipPath(boundary, clippedToBox ? Qt::IntersectClip : Qt::ReplaceClip);
         }
         const auto releaseClip = qScopeGuard([&painter, clipped] {
             if (clipped) {

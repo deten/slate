@@ -5,6 +5,7 @@
 #include "cad/command/StandardCommands.hpp"
 #include "cad/db/ConstructionLineEntity.hpp"
 #include "cad/db/CurveEntities.hpp"
+#include "cad/db/MlineEntity.hpp"
 #include "cad/db/SplineEntity.hpp"
 #include "cad/geom/Arc.hpp"
 #include "cad/geom/EllipseArc.hpp"
@@ -317,6 +318,173 @@ private:
     Vec3 lineBase_;
     Vec3 lineDirection_;
     int made_ = 0;
+};
+
+/// MLINE: a multiline, two parallel lines drawn as one.
+///
+/// Walls in plan, mostly. The lines sit the scale apart, justified to
+/// the picked points at the top, the middle or the bottom, and meet at
+/// mitred corners. Drawn from the entity's own vertex data, as the file
+/// carries it, so no style record is needed and a file's own multilines
+/// and these are one kind of thing.
+class MlineCommand final : public CommandInstance {
+public:
+    StepResult start(CommandContext& /*context*/) override { return askPoint(); }
+
+    StepResult supply(const InputValue& input, CommandContext& context) override {
+        if (input.kind == InputValue::Kind::Cancel) {
+            return StepResult::cancelled();
+        }
+        if (input.kind == InputValue::Kind::Keyword || input.kind == InputValue::Kind::Text) {
+            if (awaitingScale_) {
+                awaitingScale_ = false;
+                return askPoint();
+            }
+            const char first = input.text.empty() ? '\0' : static_cast<char>(std::toupper(
+                                                              static_cast<unsigned char>(input.text.front())));
+            if (first == 'J') {
+                stage_ = Stage::Justification;
+                InputRequest request;
+                request.kind = InputRequest::Kind::Keyword;
+                request.prompt = "Enter justification [Top/Zero/Bottom]";
+                request.keywords = {
+                    CommandKeyword{"Top", "T", "The points are the top line"},
+                    CommandKeyword{"Zero", "Z", "The points are the centre"},
+                    CommandKeyword{"Bottom", "B", "The points are the bottom line"},
+                };
+                request.defaultText = "Zero";
+                request.allowEmpty = true;
+                return StepResult::ask(request);
+            }
+            if (first == 'S') {
+                awaitingScale_ = true;
+                InputRequest request;
+                request.kind = InputRequest::Kind::Number;
+                request.prompt = "Enter mline scale";
+                request.defaultNumber = scale_;
+                request.minimum = 0.0;
+                return StepResult::ask(request);
+            }
+            if (first == 'C' && points_.size() >= 3) {
+                closed_ = true;
+                return finish(context);
+            }
+            if (stage_ == Stage::Justification) {
+                justification_ = first == 'T' ? 1 : first == 'B' ? -1 : 0;
+                stage_ = Stage::Points;
+                return askPoint();
+            }
+            return StepResult::failed("Unknown option.");
+        }
+        if (input.kind == InputValue::Kind::Number && awaitingScale_) {
+            awaitingScale_ = false;
+            if (input.number > 0.0) {
+                scale_ = input.number;
+            }
+            return askPoint();
+        }
+        if (input.kind == InputValue::Kind::Empty) {
+            if (stage_ == Stage::Justification) {
+                stage_ = Stage::Points;
+                return askPoint();
+            }
+            if (awaitingScale_) {
+                awaitingScale_ = false;
+                return askPoint();
+            }
+            return points_.size() >= 2 ? finish(context) : StepResult::cancelled();
+        }
+        if (input.kind != InputValue::Kind::Point) {
+            return StepResult::cancelled();
+        }
+        if (points_.empty() || !points_.back().equals(input.point, Tolerance{1e-9})) {
+            points_.push_back(input.point);
+        }
+        return askPoint();
+    }
+
+private:
+    enum class Stage : std::uint8_t { Points, Justification };
+
+    [[nodiscard]] StepResult askPoint() const {
+        InputRequest request;
+        request.kind = InputRequest::Kind::Point;
+        if (points_.empty()) {
+            request.prompt = "Specify start point or [Justification/Scale]";
+            request.keywords = {
+                CommandKeyword{"Justification", "J", "Where the picked points run: top, centre, bottom"},
+                CommandKeyword{"Scale", "S", "How far apart the lines are"},
+            };
+        } else {
+            request.prompt = points_.size() >= 3 ? "Specify next point or [Close], or Enter to finish"
+                                                 : "Specify next point, or Enter to finish";
+            if (points_.size() >= 3) {
+                request.keywords = {CommandKeyword{"Close", "C", "Back to the start"}};
+            }
+            request.basePoint = points_.back();
+            request.allowEmpty = true;
+        }
+        return StepResult::ask(request);
+    }
+
+    StepResult finish(CommandContext& context) {
+        auto mline = std::make_unique<MlineEntity>();
+        mline->scale = scale_;
+        mline->justification = justification_ == 1 ? 0 : justification_ == 0 ? 1 : 2;
+        mline->closed = closed_;
+        mline->elementCount = 2;
+        mline->startPoint = points_.front();
+        // Element offsets from the picked line: at the top the lines lie
+        // at 0 and -scale, at the centre at +half and -half, at the bottom
+        // at +scale and 0.
+        const double top = justification_ == 1 ? 0.0 : justification_ == 0 ? scale_ / 2.0 : scale_;
+        const double bottom = top - scale_;
+        const std::size_t n = points_.size();
+        for (std::size_t i = 0; i < n; ++i) {
+            // The direction into the next segment; the last vertex of an
+            // open multiline keeps the last segment's direction.
+            const Vec3 next = (i + 1 < n) ? points_[i + 1] : (closed_ ? points_[0] : points_[i]);
+            const Vec3 previous = (i > 0) ? points_[i - 1] : (closed_ ? points_[n - 1] : points_[i]);
+            Vec3 outgoing = (i + 1 < n || closed_) ? (next - points_[i]).normalized()
+                                                   : (points_[i] - previous).normalized();
+            Vec3 incoming = (i > 0 || closed_) ? (points_[i] - previous).normalized() : outgoing;
+            if (outgoing.length() < 1e-12) {
+                outgoing = incoming;
+            }
+            if (incoming.length() < 1e-12) {
+                incoming = outgoing;
+            }
+            // The miter: the bisector of the two normals, stretched so the
+            // element lines meet where the offset lines cross.
+            const Vec3 normalIn{-incoming.y, incoming.x, 0.0};
+            const Vec3 normalOut{-outgoing.y, outgoing.x, 0.0};
+            Vec3 miter = (normalIn + normalOut);
+            double stretch = 1.0;
+            if (miter.length() < 1e-9) {
+                miter = normalOut;
+            } else {
+                miter = miter.normalized();
+                stretch = 1.0 / std::max(miter.dot(normalOut), 0.1);
+            }
+            MlineVertex vertex;
+            vertex.position = points_[i];
+            vertex.direction = outgoing;
+            vertex.miterDirection = miter;
+            vertex.elementOffsets = {{top * stretch}, {bottom * stretch}};
+            vertex.fillOffsets = {{}, {}};
+            mline->vertices.push_back(std::move(vertex));
+        }
+        context.transaction().addToCurrentSpace(std::move(mline));
+        return StepResult::done("Multiline drawn, " + std::to_string(closed_ ? n : n - 1) +
+                                " segment" + ((closed_ ? n : n - 1) == 1 ? "" : "s"));
+    }
+
+    Stage stage_ = Stage::Points;
+    std::vector<Vec3> points_;
+    double scale_ = 1.0;
+    int justification_ = 0;
+    bool closed_ = false;
+    bool awaitingScale_ = false;
 };
 
 class LineCommand final : public CommandInstance {
@@ -1520,6 +1688,18 @@ std::vector<CommandDefinition> drawCommands() {
         ray.supportsPickfirst = false;
         ray.create = [] { return std::make_unique<ConstructionLineCommand>(false); };
         commands.push_back(std::move(ray));
+    }
+    {
+        CommandDefinition mline;
+        mline.id = "cad.draw.mline";
+        mline.name = "MLINE";
+        mline.aliases = {"ML"};
+        mline.title = "Multiline";
+        mline.description = "Draw two parallel lines as one, for walls";
+        mline.category = "Draw";
+        mline.supportsPickfirst = false;
+        mline.create = [] { return std::make_unique<MlineCommand>(); };
+        commands.push_back(std::move(mline));
     }
     {
         CommandDefinition pline;

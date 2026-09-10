@@ -22,6 +22,18 @@ public:
     /// Handle of the block definition being referenced.
     Handle blockHandle;
 
+    /// Clip boundary in the block's own coordinates, empty when unclipped.
+    /// A reference or a block shows only what falls inside it. Kept in
+    /// the file as a spatial filter in the reference's extension dictionary.
+    std::vector<Vec3> clipBoundary;
+    /// Whether the boundary is in force; off shows the whole block again
+    /// without losing the boundary.
+    bool clipEnabled = true;
+
+    [[nodiscard]] bool isClipped() const noexcept {
+        return clipEnabled && clipBoundary.size() >= 3;
+    }
+
     /// Where the block's origin lands, in the containing space.
     Vec3 position;
 
