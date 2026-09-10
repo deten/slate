@@ -244,6 +244,17 @@ def test_snap_tracking_finds_the_crossing(work: Path) -> None:
            f"no line starts at the crossing of the two paths: {starts}")
 
 
+def test_middle_double_click_zooms_to_extents(work: Path) -> None:
+    """After zooming into a corner, a middle double-click frames the whole
+    drawing again: the y=0 line is back on its extents-view row and picks."""
+    log, _ = run(work, "middle-zoom", TWO_LINES + [
+        "--run", "ZOOM", "--run", "0,0", "--run", "50,20",
+        "--double-click", "600,400,middle",
+        "--click", "600,483", "--run", "LIST", "--run", "",
+    ], save=False)
+    expect("Line" in log and "0,0" in log, f"the view did not return to the extents:\n{log}")
+
+
 def test_array_rectangular(work: Path) -> None:
     # Arrays the y=0 line of the standard pair, which is the one on row 670.
     # A click point needs geometry whose screen position is known, and that is
@@ -1759,6 +1770,7 @@ SCENARIOS = [
     test_array_rectangular,
     test_array_polar,
     test_block_is_picked_by_its_geometry,
+    test_middle_double_click_zooms_to_extents,
     test_distance_reports_separation_and_angle,
     test_area_of_a_closed_object,
     test_area_of_an_open_object_reports_length,

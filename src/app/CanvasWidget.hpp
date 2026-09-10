@@ -64,6 +64,9 @@ public:
     void reload();
 
     void zoomExtents();
+    /// Zoom to the selected objects, or to the extents when nothing is
+    /// selected. What a middle double-click does.
+    void zoomToSelection();
 
     /// Frame a world-space box, as ZOOM Window does.
     void zoomToBox(const Box3& box);

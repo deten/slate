@@ -231,6 +231,29 @@ void CanvasWidget::setViewport(const render::Viewport& view) {
     update();
 }
 
+void CanvasWidget::zoomToSelection() {
+    if (document_ == nullptr) {
+        zoomExtents();
+        return;
+    }
+    Box3 bounds;
+    for (const Handle handle : document_->selection()) {
+        const Entity* entity = document_->db().getEntity(handle);
+        if (entity != nullptr && !entity->erased && !entity->isUnbounded()) {
+            bounds = bounds.united(entity->bounds());
+        }
+    }
+    if (bounds.isEmpty()) {
+        zoomExtents();
+        return;
+    }
+    rememberView();
+    syncViewportSize();
+    viewport_ = viewport_.zoomToFit(bounds);
+    Q_EMIT viewChanged();
+    update();
+}
+
 void CanvasWidget::zoomExtents() {
     if (document_ != nullptr && viewportActive()) {
         // The model's extents into the frame, as MVIEW fits them.
@@ -1059,6 +1082,17 @@ void CanvasWidget::syncInPlaceEditor() {
 }
 
 void CanvasWidget::mouseDoubleClickEvent(QMouseEvent* event) {
+    // A middle double-click zooms to the extents: the whole drawing, or
+    // the selected objects when there are any. The second press began a
+    // pan, as every middle press does, so that is ended first, or the
+    // canvas would drag until the button came up.
+    if (event->button() == Qt::MiddleButton) {
+        panning_ = false;
+        unsetCursor();
+        zoomToSelection();
+        event->accept();
+        return;
+    }
     // On a sheet, a double-click inside a viewport steps into it, and one
     // outside the active viewport steps back out -- other CAD software's gesture for
     // MSPACE and PSPACE.

@@ -2404,7 +2404,7 @@ void MainWindow::clickAt(const QPoint& canvasPosition, Qt::KeyboardModifiers mod
     QCoreApplication::processEvents();
 }
 
-void MainWindow::doubleClickAt(const QPoint& canvasPosition) {
+void MainWindow::doubleClickAt(const QPoint& canvasPosition, Qt::MouseButton button) {
     // A real double-click is a press, a release, then a DblClick and its
     // release — Qt delivers exactly that, and the canvas acts on the DblClick.
     // Synthesising only the DblClick would test a path the mouse never takes.
@@ -2414,8 +2414,7 @@ void MainWindow::doubleClickAt(const QPoint& canvasPosition) {
     const QPointF global = canvas_->mapToGlobal(local);
     for (const QEvent::Type type : {QEvent::MouseButtonPress, QEvent::MouseButtonRelease,
                                     QEvent::MouseButtonDblClick, QEvent::MouseButtonRelease}) {
-        QMouseEvent event{type,        local,          global,
-                          Qt::LeftButton, Qt::LeftButton, Qt::NoModifier};
+        QMouseEvent event{type, local, global, button, button, Qt::NoModifier};
         QCoreApplication::sendEvent(canvas_, &event);
     }
     QCoreApplication::processEvents();

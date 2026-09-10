@@ -190,7 +190,7 @@ public:
 
     /// Trigger a menu bar item by its label or by the command it runs.
     bool pickMenuBarAction(const QString& label);
-    void doubleClickAt(const QPoint& canvasPosition);
+    void doubleClickAt(const QPoint& canvasPosition, Qt::MouseButton button = Qt::LeftButton);
 
     /// The deepest widget under a window position, so a scripted click can
     /// reach the ribbon and the panels rather than only the drawing.

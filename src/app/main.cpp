@@ -333,8 +333,16 @@ int main(int argc, char* argv[]) {
                     window.rightHoldAt(*point);
                 }
             } else if (argument == "--double-click") {
-                if (const auto point = pointAt(value)) {
-                    window.doubleClickAt(*point);
+                // "x,y" double-clicks the left button; "x,y,middle" the
+                // middle, which zooms to the extents.
+                QString spec = value;
+                Qt::MouseButton button = Qt::LeftButton;
+                if (spec.endsWith(QStringLiteral(",middle"), Qt::CaseInsensitive)) {
+                    spec.chop(7);
+                    button = Qt::MiddleButton;
+                }
+                if (const auto point = pointAt(spec)) {
+                    window.doubleClickAt(*point, button);
                 }
             } else if (argument == "--type") {
                 window.typeText(value);
