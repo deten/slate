@@ -35,7 +35,7 @@
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
   <Package Name="Slate CAD"
            Manufacturer="Slate"
-           Version="0.2.0"
+           Version="0.3.0"
            UpgradeCode="6F0A2B1C-9D3E-4C58-8A71-3E2D5B4C9A10"
            Scope="perMachine">
 
