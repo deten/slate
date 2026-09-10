@@ -2338,6 +2338,9 @@ void MainWindow::hoverAt(const QPoint& canvasPosition) {
                      Qt::NoButton,        Qt::NoButton,   Qt::NoModifier};
     QCoreApplication::sendEvent(canvas_, &move);
     QCoreApplication::processEvents();
+    // A scripted hover is a deliberate rest on the point, so what a person
+    // gets after a moment the script gets at once.
+    canvas_->settleTracking();
 }
 
 QWidget* MainWindow::widgetAt(const QPoint& windowPosition) {

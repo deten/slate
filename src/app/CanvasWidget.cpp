@@ -57,6 +57,12 @@ constexpr double kSnapMarkerPixels = 7.0;
 
 CanvasWidget::CanvasWidget(QWidget* parent) : QWidget(parent) {
     setMouseTracking(true);
+    // A snap point is acquired for tracking after the pointer has rested on
+    // it for a moment, as other CAD software does. Acquiring the instant the
+    // marker appeared left a path behind every corner the pointer crossed.
+    acquireTimer_.setSingleShot(true);
+    acquireTimer_.setInterval(300);
+    connect(&acquireTimer_, &QTimer::timeout, this, [this] { settleTracking(); });
     // Deliberately never takes the keyboard.
     //
     // The command line owns typed input entirely: it holds the buffer, the
@@ -610,13 +616,35 @@ void CanvasWidget::updateSnap(const QPointF& position) {
 
     activeSnap_ = snapEngine_.findBest(query);
 
-    // Pointing at a snap acquires it. other CAD software asks for a moment's hover; the
-    // marker here appears at once, so acquiring at once keeps the two in step
-    // -- and the list holds only the last few, so passing over a crowd of
-    // snaps leaves the ones that were pointed at most recently.
+    // Resting on a snap acquires it, after a moment. The moment matters:
+    // acquiring the instant the marker appeared left a path behind every
+    // corner the pointer crossed on its way somewhere else, which read as
+    // snaps to points that were not there. The timer restarts whenever the
+    // pointer moves to a different snap, and is dropped when it leaves.
     if (trackingEnabled() && activeSnap_.has_value()) {
-        acquireTrackingPoint(activeSnap_->position);
+        if (!pendingAcquire_.has_value() || !pendingAcquire_->equals(activeSnap_->position)) {
+            pendingAcquire_ = activeSnap_->position;
+            acquireTimer_.start();
+        }
+    } else {
+        pendingAcquire_.reset();
+        acquireTimer_.stop();
     }
+}
+
+void CanvasWidget::settleTracking() {
+    acquireTimer_.stop();
+    if (!pendingAcquire_.has_value() || !trackingEnabled()) {
+        pendingAcquire_.reset();
+        return;
+    }
+    // Only if the pointer is still on it: a timer that fires after the
+    // pointer has moved on must not acquire where it used to be.
+    if (activeSnap_.has_value() && activeSnap_->position.equals(*pendingAcquire_)) {
+        acquireTrackingPoint(*pendingAcquire_);
+        update();
+    }
+    pendingAcquire_.reset();
 }
 
 Vec3 CanvasWidget::worldAt(const QPointF& position) const {

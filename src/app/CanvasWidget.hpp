@@ -5,6 +5,7 @@
 
 #include <QStringList>
 #include <QBasicTimer>
+#include <QTimer>
 #include <QWidget>
 #include <deque>
 #include <memory>
@@ -67,6 +68,9 @@ public:
     /// Zoom to the selected objects, or to the extents when nothing is
     /// selected. What a middle double-click does.
     void zoomToSelection();
+    /// Acquire the snap point the pointer is resting on now, without the
+    /// wait. A scripted hover is a deliberate rest.
+    void settleTracking();
 
     /// Frame a world-space box, as ZOOM Window does.
     void zoomToBox(const Box3& box);
@@ -652,6 +656,11 @@ private:
     /// A vector rather than a deque: it holds at most three, and `cad_core`
     /// takes a span of them.
     std::vector<Vec3> trackedPoints_;
+    /// The snap point the pointer is resting on and has not yet acquired.
+    /// Acquisition waits for a moment's rest, so passing over a corner does
+    /// not leave a path behind; the timer says when the moment is up.
+    std::optional<Vec3> pendingAcquire_;
+    QTimer acquireTimer_;
 
     /// Expanded block geometry, kept between mouse moves.
     ///
