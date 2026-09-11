@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.24)
 
 project(Slate
-    VERSION 0.3.0
+    VERSION 0.3.1
     # The product is Slate; "CAD" is in the description and the shipped name so
     # that somebody searching for drafting software finds it. See
     # src/app/Branding.hpp for where each form of the name belongs.

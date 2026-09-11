@@ -31,7 +31,7 @@ int main(int argc, char* argv[]) {
     QApplication::setApplicationName(cad::app::kProductName);
     QApplication::setApplicationDisplayName(cad::app::kDisplayName);
     QApplication::setOrganizationName(cad::app::kDisplayName);
-    QApplication::setApplicationVersion("0.3.0");
+    QApplication::setApplicationVersion("0.3.1");
 
     // A deliberate typographic baseline rather than the platform default.
     // Segoe UI Variable is the modern Windows UI face; the fallbacks keep the

@@ -36,4 +36,4 @@ Run `build.ps1` in PowerShell. It needs Visual Studio 2022, CMake, Ninja and Qt 
 
 ## Status
 
-Version 0.3.0. Expect rough edges. Keep backups of drawings you care about.
+Version 0.3.1. Expect rough edges. Keep backups of drawings you care about.
