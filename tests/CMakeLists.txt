@@ -38,6 +38,7 @@ add_executable(cad_tests
     construction_line_tests.cpp
     clip_tests.cpp
     mline_command_tests.cpp
+    snap_tests.cpp
     boundary_trace_tests.cpp
     nurbs_tests.cpp
     tessellation_tests.cpp

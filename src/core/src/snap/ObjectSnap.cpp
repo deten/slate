@@ -255,7 +255,17 @@ std::vector<SnapPoint> SnapEngine::findAll(const SnapQuery& query) const {
 
             if (hasMode(query.modes, SnapMode::Center)) {
                 if (const auto center = centerOf(curve)) {
-                    add(*center, SnapMode::Center, candidate.handle);
+                    // Reached from the rim, which is where the pointer is
+                    // when a drafter wants the centre of a circle, as well
+                    // as from the centre itself. Measured to whichever is
+                    // nearer, so it competes fairly with the rim's own snaps.
+                    const double toCentre = query.cursor.distance2To(*center);
+                    const double toRim = curve.closestPoint(query.cursor).distance;
+                    const double distance = std::min(toCentre, toRim);
+                    if (distance <= query.aperture) {
+                        results.push_back({*center, SnapMode::Center, candidate.handle, distance,
+                                           priorityOf(SnapMode::Center)});
+                    }
                 }
             }
 
@@ -285,6 +295,26 @@ std::vector<SnapPoint> SnapEngine::findAll(const SnapQuery& query) const {
                 // priority.
                 if (extended && (extended->param < 0.0 || extended->param > 1.0)) {
                     add(extended->point, SnapMode::Extension, candidate.handle);
+                }
+            }
+
+            if (hasMode(query.modes, SnapMode::Parallel) && query.basePoint != nullptr) {
+                // The line through the point already placed, running the way
+                // this segment runs: a wall parallel to another. Straight
+                // segments only, since a curve has no one direction. The
+                // cursor is pulled onto that line when it is within the
+                // aperture of it, wherever it is along it.
+                const Vec3 direction = curve.tangentAt(0.5);
+                const bool straight = direction.equals(curve.tangentAt(0.0), query.tolerance) &&
+                                      direction.equals(curve.tangentAt(1.0), query.tolerance);
+                if (straight && direction.length() > 0.0) {
+                    const Vec3 along = direction.normalized();
+                    const Vec3 offset = query.cursor - *query.basePoint;
+                    const Vec3 onLine = *query.basePoint + along * offset.dot(along);
+                    if (onLine.distanceTo(query.cursor) <= query.aperture &&
+                        !onLine.equals(*query.basePoint, query.tolerance)) {
+                        add(onLine, SnapMode::Parallel, candidate.handle);
+                    }
                 }
             }
 

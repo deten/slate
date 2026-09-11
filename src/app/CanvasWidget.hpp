@@ -39,7 +39,7 @@ namespace cad::app {
 inline constexpr std::uint32_t kDefaultSnapModes =
     toMask(SnapMode::Endpoint) | toMask(SnapMode::Midpoint) | toMask(SnapMode::Center) |
     toMask(SnapMode::Node) | toMask(SnapMode::Quadrant) | toMask(SnapMode::Intersection) |
-    toMask(SnapMode::Perpendicular) | toMask(SnapMode::Extension);
+    toMask(SnapMode::Perpendicular) | toMask(SnapMode::Extension) | toMask(SnapMode::Parallel);
 
 /// The drawing canvas: rendering, navigation, selection and command input.
 ///
